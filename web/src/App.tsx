@@ -80,7 +80,7 @@ function TranscriptPanel({ lines, partial }: { lines: Line[]; partial: string })
       <div ref={ref} className="transcript">
         {lines.length === 0 && <div className="empty">Waiting for speech…</div>}
         {lines.map((m) => {
-          const who = m.wearer >= 0.6 ? `You · ${m.speaker}` : `Speaker ${m.speaker}`
+          const who = m.is_wearer ? `You` : `Speaker ${m.speaker}`
           return (
             <div key={m.key} className={`line ${m.mode ?? ''}`}>
               <div className="who" style={{ color: spkColor(m.speaker) }}>{who}</div>

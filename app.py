@@ -122,7 +122,13 @@ class Cast:
         self.pool = ThreadPoolExecutor(max_workers=3)
         self.scheduler = Scheduler(self.on_reminder_due)
         self.last_glance_status = 0.0
-        self.speaker_votes = {}         # diarized speaker id -> (+ wearer / - not wearer) evidence
+        print("Loading the voice model...")
+        from vexo_open.audio import PcmDecoder
+        from voices import AudioBuffer, Voices
+        self.voices = Voices()               # SpeechBrain ECAPA voiceprints (CPU)
+        self.audio = AudioBuffer()
+        self.decoder = PcmDecoder()
+        self.last_voice = None
         screen.snapshot = lambda: [self.reminders_msg()]
 
     # ---- band events (run on the band's handler thread; keep short)
@@ -148,6 +154,10 @@ class Cast:
         if self.audio_t0 is None:
             self.audio_t0 = time.time()
         self.ears.feed(a)
+        try:
+            self.audio.add(self.decoder.feed(a))
+        except Exception:  # noqa: BLE001 - a bad packet must not stop transcription
+            pass
 
     def on_double_tap(self, e):
         self.clip()
@@ -164,13 +174,19 @@ class Cast:
             return                                   # that was Cast's own voice
         pose = self.poses.pose_during(start, end)
         rms = self.loud.level_during(start, end)
-        score = self.wearer_score(seg["speaker"], rms, pose)
+        vid, sim = self.voices.identify(self.audio.slice(seg["start"] - 0.05, seg["end"] + 0.05))
+        if vid is None:                              # too short to fingerprint: assume same as last
+            vid = self.last_voice if self.last_voice is not None else 0
+        self.last_voice = vid
+        score = self.wearer_score(vid, rms, pose)
         mode = MODE_OF_POSE.get(pose, "ambient")
-        entry = {"speaker": seg["speaker"], "text": seg["text"], "start": start, "end": end,
-                 "pose": pose, "rms_db": rms, "wearer": score, "mode": mode}
+        entry = {"speaker": vid, "text": seg["text"], "start": start, "end": end,
+                 "pose": pose, "rms_db": rms, "wearer": score, "mode": mode,
+                 "is_wearer": vid == self.voices.wearer_id, "voice_sim": round(sim, 2)}
         self.segments.append(entry)
         self.screen.send("segment", **entry)
-        print("[spk %s | %-10s | wearer %.2f | %s] %s" % (seg["speaker"], pose, score, mode, seg["text"]))
+        print("[voice %s%s sim %.2f | %-10s | wearer %.2f | %s] %s" % (
+            vid, "*" if entry["is_wearer"] else "", sim, pose, score, mode, seg["text"]))
         if mode in ("command", "ask"):
             if score >= WEARER_MIN:
                 self.act(mode, entry)
@@ -179,25 +195,22 @@ class Cast:
                                  reason="Not the wearer (score %.2f)" % score)
                 self.voice.say("Only the wearer can do that.")
 
-    def wearer_score(self, speaker, rms, pose):
-        """Loudness decides when the wrist is raised (clear 15 dB gap in calibration).
-        Each confident raised-wrist sentence teaches Cast which speaker label is the wearer,
-        so it keeps recognising them with the arm down, where loudness can't tell."""
+    def wearer_score(self, voice_id, rms, pose):
+        """Wrist raised: loudness decides (15 dB gap in calibration), and confident sentences
+        teach Cast which voiceprint is the wearer. Arm down: the voiceprint decides."""
         loud = self.loud.wearer_score(rms, pose)
         if loud is not None:
             if loud >= 0.8:
-                self.speaker_votes[speaker] = self.speaker_votes.get(speaker, 0) + 1
+                self.voices.vote_wearer(voice_id, True)
             elif loud <= 0.2:
-                self.speaker_votes[speaker] = self.speaker_votes.get(speaker, 0) - 1
-            known = self.speaker_votes.get(speaker, 0)
-            # blend: a known wearer voice nudges up, a known other voice nudges down
-            return round(min(1.0, max(0.0, loud + 0.1 * max(-2, min(2, known)))), 2)
-        votes = self.speaker_votes.get(speaker, 0)
-        if votes > 0:
-            return 0.85
-        if votes < 0 or any(v > 0 for v in self.speaker_votes.values()):
-            return 0.15                 # someone else is already known to be the wearer
-        return 0.5
+                self.voices.vote_wearer(voice_id, False)
+            if self.voices.wearer_id is None:
+                return loud
+            match = 1.0 if voice_id == self.voices.wearer_id else 0.0
+            return round(0.6 * loud + 0.4 * match, 2)
+        if self.voices.wearer_id is None:
+            return 0.5
+        return 0.9 if voice_id == self.voices.wearer_id else 0.1
 
     def act(self, mode, entry):
         self.screen.send("action", status="working", mode=mode, text=entry["text"], result="Thinking...")

@@ -8,7 +8,7 @@ export interface LevelEvent extends Base { kind: 'level'; rms_db: number }
 export interface PartialEvent extends Base { kind: 'partial'; text: string }
 export interface SegmentEvent extends Base {
   kind: 'segment'; speaker: number; text: string; start: number; end: number
-  pose: Pose; rms_db: number | null; wearer: number; mode: Mode
+  pose: Pose; rms_db: number | null; wearer: number; mode: Mode; is_wearer?: boolean; voice_sim?: number
 }
 export interface ActionEvent extends Base {
   kind: 'action'; status: 'done' | 'refused' | 'working'; mode: Mode; text: string; result?: string; reason?: string
