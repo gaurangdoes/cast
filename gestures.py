@@ -118,6 +118,8 @@ class Recordings:
         X, y = [], []
         for f in sorted(DATA.glob("*.npz")):
             label = f.stem.rsplit("_", 1)[0]
+            if label.startswith("pose_"):
+                continue
             d = np.load(f)
             if len(d["t"]) < RATE:
                 continue
@@ -182,7 +184,7 @@ class LiveDetector:
         peaks = []
         for f in DATA.glob("*.npz"):
             label = f.stem.rsplit("_", 1)[0]
-            if label == "none":
+            if label == "none" or label.startswith("pose_"):
                 continue
             d = np.load(f)
             act = activity(d["acc"])            # on the whole recording: no edge effects
@@ -216,3 +218,90 @@ class LiveDetector:
             self.last_fire = now
             return label, round(prob, 2)
         return None
+
+
+# ---------------------------------------------------------------- poses (held positions)
+#
+# Each pose is recorded for ~20 s while the wearer varies it on purpose (angles, sitting,
+# standing). Every 0.5 s window of that becomes one example: average gravity direction plus
+# how much it wobbled. A random forest learns each pose as a region, not a single angle.
+
+POSE_MODEL = DATA / "pose_model.pkl"
+POSE_WIN_S = 0.5
+
+
+def pose_features(acc):
+    m = acc.mean(0)
+    u = m / (np.linalg.norm(m) or 1.0)
+    return np.concatenate([u, acc.std(0), [np.linalg.norm(m)]])
+
+
+def pose_dataset():
+    X, y = [], []
+    win = int(POSE_WIN_S * RATE)
+    for f in sorted(DATA.glob("pose_*.npz")):
+        label = f.stem.rsplit("_", 1)[0][len("pose_"):]
+        acc = np.load(f)["acc"]
+        acc = acc[int(1.0 * RATE):]                     # skip the first second (getting into position)
+        for i in range(0, len(acc) - win, win // 2):     # 50% overlap
+            X.append(pose_features(acc[i:i + win]))
+            y.append(label)
+    return np.array(X), np.array(y)
+
+
+def train_poses():
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.model_selection import cross_val_predict, GroupKFold, StratifiedKFold
+    import pickle
+    X, y = pose_dataset()
+    labels, counts = np.unique(y, return_counts=True) if len(y) else ([], [])
+    report = {"samples": {str(l): int(c) for l, c in zip(labels, counts)}}
+    if len(labels) < 2:
+        report["error"] = "Record at least two poses."
+        return report
+    clf = RandomForestClassifier(n_estimators=200, class_weight="balanced", random_state=0)
+    # contiguous folds (no shuffling): neighbouring windows overlap, shuffling would be too optimistic
+    pred = cross_val_predict(clf, X, y, cv=StratifiedKFold(min(5, int(min(counts))), shuffle=False))
+    report["accuracy"] = round(float((pred == y).mean()), 3)
+    report["per_label"] = {str(l): {"recall": round(float((pred[y == l] == l).mean()), 2),
+                                    "false_alarms": int(((pred == l) & (y != l)).sum())} for l in labels}
+    clf.fit(X, y)
+    POSE_MODEL.parent.mkdir(parents=True, exist_ok=True)
+    POSE_MODEL.write_bytes(pickle.dumps(clf))
+    (DATA / "pose_report.json").write_text(json.dumps(report, indent=2))
+    return report
+
+
+class LivePose:
+    """Feed samples; .current is the pose that has held for HOLD_S with good confidence."""
+    HOLD_S = 0.35
+
+    def __init__(self):
+        import pickle
+        self.clf = pickle.loads(POSE_MODEL.read_bytes())
+        self.buf = []
+        self.last_t = -1e9
+        self.candidate, self.since = None, 0.0
+        self.current, self.prob = "moving", 0.0
+        self.raw = None
+
+    def feed(self, t_ms, ax, ay, az):
+        self.buf.append((ax, ay, az))
+        win = int(POSE_WIN_S * RATE)
+        if len(self.buf) > win:
+            del self.buf[: len(self.buf) - win]
+        now = t_ms / 1000.0
+        if now - self.last_t < 0.1 or len(self.buf) < win:
+            return self.current
+        self.last_t = now
+        probs = self.clf.predict_proba([pose_features(np.array(self.buf))])[0]
+        i = int(np.argmax(probs))
+        label, p = str(self.clf.classes_[i]), float(probs[i])
+        self.raw = (label, round(p, 2))
+        if p < 0.6 or np.array(self.buf).std(0).max() > 0.25:   # unsure, or arm swinging
+            label = "moving"
+        if label != self.candidate:
+            self.candidate, self.since = label, now
+        if now - self.since >= self.HOLD_S:
+            self.current, self.prob = label, p
+        return self.current

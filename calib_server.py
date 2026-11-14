@@ -90,16 +90,17 @@ class Calib:
         self.active = None            # {"id", "phase", "left"}
         self.loop = None
         self.clients = set()
-        self.lab = {"recording": None, "report": self._load_report(), "live": False, "detections": {}, "last": None}
+        self.lab = {"recording": None, "report": self._load_report(), "live": False, "detections": {}, "last": None,
+                    "pose_report": self._load_report("pose_report.json"), "pose": None, "pose_raw": None}
         self.lab_buf = None              # fast samples while a lab recording runs
         self.detector = None
 
     # ---- gesture lab
 
     @staticmethod
-    def _load_report():
+    def _load_report(name="report.json"):
         try:
-            return json.loads((gestures.DATA / "report.json").read_text())
+            return json.loads((gestures.DATA / name).read_text())
         except (OSError, ValueError):
             return None
 
@@ -114,14 +115,22 @@ class Calib:
     def _lab_record(self, label, reps):
         name = {"fist": "close and open your fist", "thumbs_up": "thumbs up, then back",
                 "none": "move normally"}.get(label, label)
+        pose_say = {"pose_raised": "Hold your wrist up near your mouth, like talking into it",
+                    "pose_rest": "Rest your arm on the table or your lap",
+                    "pose_side": "Let your arm hang at your side",
+                    "pose_point": "Point your arm at someone, palm down"}
         self.band.configure(motion=gestures.RATE, sensors="accel")
         self.lab_buf = []
         cues = []
         try:
-            if label == "none":
+            if label == "none" or label.startswith("pose_"):
                 self.lab["recording"] = {"label": label, "rep": 0, "reps": 0, "phase": "go", "left": reps}
                 self.push_state()
-                self.say("Move normally for %d seconds. Talk with your hands, scratch, rest. Don't do the gestures." % reps)
+                if label == "none":
+                    self.say("Move normally for %d seconds. Talk with your hands, scratch, rest. Don't do the gestures." % reps)
+                else:
+                    self.say("%s. Keep changing it a little: different angles, sit, stand." % pose_say.get(label, label))
+                    time.sleep(2.5)
                 for left in range(reps, 0, -1):
                     self.lab["recording"]["left"] = left
                     self.push_state()
@@ -159,10 +168,18 @@ class Calib:
             self.lab["report"] = gestures.train()
         except Exception as e:  # noqa: BLE001
             self.lab["report"] = {"error": str(e)}
+        try:
+            self.lab["pose_report"] = gestures.train_poses()
+        except Exception as e:  # noqa: BLE001
+            self.lab["pose_report"] = {"error": str(e)}
         self.push_state()
 
     def lab_live(self, on):
         if on:
+            try:
+                self.posemodel = gestures.LivePose() if gestures.POSE_MODEL.exists() else None
+            except Exception:  # noqa: BLE001
+                self.posemodel = None
             try:
                 self.detector = gestures.LiveDetector()
             except Exception as e:  # noqa: BLE001
@@ -174,6 +191,7 @@ class Calib:
         else:
             self.lab["live"] = False
             self.detector = None
+            self.posemodel = None
             self.band.configure(motion=50, sensors="both")
         self.push_state()
 
@@ -205,6 +223,13 @@ class Calib:
     def on_motion(self, m):
         if self.lab_buf is not None:
             self.lab_buf.append((m.t, m.ax, m.ay, m.az))
+        if getattr(self, "posemodel", None) is not None:
+            before = self.lab.get("pose")
+            pose = self.posemodel.feed(m.t, m.ax, m.ay, m.az)
+            self.lab["pose"] = pose
+            self.lab["pose_raw"] = self.posemodel.raw
+            if pose != before:
+                self.push_state()
         if self.detector is not None:
             hit = self.detector.feed(m.t, m.ax, m.ay, m.az)
             if hit:
@@ -328,7 +353,8 @@ class Calib:
             n = math.sqrt(sum(x * x for x in self.g)) or 1
             g = [round(x / n, 3) for x in self.g]
         return json.dumps({"kind": "cal_live", "gravity": g, "gyro": round(self.gyro, 1), "rms_db": self.rms,
-                           "nearest": self.nearest_pose()})
+                           "nearest": self.nearest_pose(), "pose": self.lab.get("pose"),
+                           "pose_raw": self.lab.get("pose_raw")})
 
     def push_state(self):
         if self.loop and not self.loop.is_closed():

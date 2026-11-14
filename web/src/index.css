@@ -149,3 +149,4 @@ h2 { font-family: var(--mono); font-weight: 500; font-size: 12px; letter-spacing
 .lab-counter.hit { background: color-mix(in srgb, var(--ok) 22%, var(--panel)); border-color: var(--ok); }
 .lab-counter-n { font-family: var(--display); font-size: 48px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .lab-counter-k { font-family: var(--mono); color: var(--muted); }
+.lab-pose { padding: 12px 18px; border-radius: 12px; border: 1px solid var(--command); background: color-mix(in srgb, var(--command) 8%, var(--panel)); text-align: center; min-width: 220px; }
