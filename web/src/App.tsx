@@ -7,7 +7,7 @@ const MODE_COLOR: Record<string, string> = {
   note: 'var(--note)', for_them: 'var(--for_them)', status: 'var(--status)',
 }
 const POSE_NAME: Record<string, string> = {
-  mouth: 'Wrist to mouth', ear: 'Wrist to ear', rest_table: 'Resting', side: 'At your side',
+  mouth: 'Wrist to mouth', ear: 'Wrist raised', rest_table: 'Resting', side: 'At your side',
   chest: 'On chest', extended: 'Arm out', glance: 'Glance', moving: 'Moving',
 }
 const spkColor = (s: number | null | undefined) => `var(--spk${(s ?? 0) % 4})`
@@ -59,10 +59,10 @@ function WristPanel(p: {
       <h2>Last speaker is the wearer</h2>
       <div className="wearer-big">{p.wearer != null ? Number(p.wearer).toFixed(2) : '–'}</div>
       <div className="legend">
-        <b>mouth</b><span>command: Cast acts on it</span>
-        <b>ear</b><span>ask: Cast answers out loud</span>
+        <b>wrist to mouth</b><span>talk to Cast: commands and questions</span>
         <b>resting</b><span>ambient: remembered only</span>
         <b>double-tap</b><span>clip what was just said</span>
+        <b>glance</b><span>hear your next reminder</span>
       </div>
     </section>
   )

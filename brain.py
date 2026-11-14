@@ -46,7 +46,8 @@ Command: "{text}"
 
 Return JSON with exactly these keys:
 - "intent": "reminder" if they want to be reminded or alerted later, "cancel_reminder" if they
-  want to cancel one, otherwise "other".
+  want to cancel one, "question" if they are asking about something that was said or about their
+  reminders (e.g. "what did she just say?", "when do I need to move the car?"), otherwise "other".
 - "task": short label for what to remind them about (empty if not a reminder), e.g. "Move the car".
 - "remind_at": ISO 8601 local time with offset for when to remind them (empty if not a reminder).
   Work out times from what they said, e.g. "I parked, it ends in 2 hours, remind me 5 minutes

@@ -215,6 +215,9 @@ class Cast:
                     self.screen.send("reminders", items=self.scheduler.pending())
                     self.screen.send("action", status="done", mode=mode, text=entry["text"],
                                      result="Reminder: %s %s" % (r["task"], spoken_time(r["remind_at"])))
+                elif intent == "question":
+                    say = brain.answer_question(entry["text"], self.transcript_lines(), self.reminder_lines())
+                    self.screen.send("action", status="done", mode="ask", text=entry["text"], result=say)
                 elif intent == "cancel_reminder":
                     r = self.scheduler.cancel_latest()
                     say = "Cancelled %s." % r["task"] if r else "There's nothing to cancel."
@@ -306,7 +309,17 @@ def main():
         import kit
         from vexo_open import audio
         extra["audio_packets"] = audio.ogg_packets(kit.SAMPLE_SPEECH)
-    band = Band.connect(args.number or 42, "sim" if args.sim else ("serial" if args.usb else "ble"), **extra)
+    band = None
+    for attempt in range(90):            # keep trying ~3 minutes: double-tap the band any time
+        try:
+            band = Band.connect(args.number or 42, "sim" if args.sim else ("serial" if args.usb else "ble"), **extra)
+            break
+        except Exception as e:  # noqa: BLE001
+            if attempt == 0:
+                print("Waiting for the band. Double-tap it (light blinks blue)...")
+            time.sleep(2)
+    if band is None:
+        sys.exit("Could not connect to the band.")
     print("Connected to", band.name)
 
     cast = Cast(band, screen, voice)
