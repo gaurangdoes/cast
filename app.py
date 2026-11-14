@@ -322,7 +322,7 @@ class Cast:
                 if intent == "reminder":
                     r = self.scheduler.add(out.get("task"), out["remind_at_epoch"], out.get("say"))
                     say = out.get("say") or "Okay, I'll remind you %s." % spoken_time(r["remind_at"])
-                    self.screen.send("reminder", status="scheduled", **r)
+                    self.screen.send("reminder", **r)
                     self.screen.send("reminders", items=self.scheduler.pending())
                     self.screen.send("action", id=aid, status="done", mode=mode, text=entry["text"],
                                      result="Reminder: %s %s" % (r["task"], spoken_time(r["remind_at"])))
@@ -486,7 +486,7 @@ def main():
         band.configure(motion=gestures.RATE, sensors="accel", events=True, audio=True, mic_level=True)
     else:
         band.configure(motion=50, events=True, audio=True, mic_level=True)
-    band.on("notice", lambda n: print("[band notice]", getattr(n, "kind", n)))
+    band.on("notice", lambda n: print("[band notice]", n if isinstance(n, dict) else getattr(n, "__dict__", n), "| streams now:", band.streams))
     print("Microphone on (solid blue light). Tell people nearby. Screen: http://localhost:%d" % HTTP_PORT)
 
     async def run():
