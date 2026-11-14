@@ -26,8 +26,9 @@ def _gemini(prompt, model, timeout):
     return json.loads(data["candidates"][0]["content"]["parts"][0]["text"])
 
 
-def ask_json(prompt):
-    for model, timeout in ((PRIMARY, 8), (FALLBACK, 6)):
+def ask_json(prompt, fast=False):
+    order = ((FALLBACK, 5), (PRIMARY, 8)) if fast else ((PRIMARY, 8), (FALLBACK, 6))
+    for model, timeout in order:
         try:
             return _gemini(prompt, model, timeout)
         except Exception as e:  # noqa: BLE001 - any failure falls through to the next model
@@ -78,7 +79,7 @@ If the answer is not in what was heard, say so briefly.
 
 def interpret_command(text):
     now = _now()
-    out = ask_json(COMMAND_PROMPT.format(now=now.isoformat(timespec="seconds"), text=text))
+    out = ask_json(COMMAND_PROMPT.format(now=now.isoformat(timespec="seconds"), text=text), fast=True)
     if not out:
         out = regex_reminder(text, now) or {"intent": "other", "say": "Sorry, I couldn't do that."}
     if out.get("intent") == "reminder":

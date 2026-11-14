@@ -150,3 +150,6 @@ h2 { font-family: var(--mono); font-weight: 500; font-size: 12px; letter-spacing
 .lab-counter-n { font-family: var(--display); font-size: 48px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .lab-counter-k { font-family: var(--mono); color: var(--muted); }
 .lab-pose { padding: 12px 18px; border-radius: 12px; border: 1px solid var(--command); background: color-mix(in srgb, var(--command) 8%, var(--panel)); text-align: center; min-width: 220px; }
+
+.offrecord { position: fixed; left: 0; right: 0; top: 0; z-index: 40; padding: 14px; text-align: center; background: var(--fg); color: var(--panel); font: 600 18px var(--display); }
+.gtoast { position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%); z-index: 45; padding: 14px 26px; border-radius: 999px; background: var(--fg); color: var(--panel); font: 600 22px var(--display); box-shadow: 0 6px 24px rgba(23, 32, 43, .25); }

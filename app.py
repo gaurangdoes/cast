@@ -37,7 +37,8 @@ import ears  # noqa: E402
 import nemotron  # noqa: E402
 from concurrent.futures import ThreadPoolExecutor  # noqa: E402
 from scheduler import Scheduler, spoken_time  # noqa: E402
-from poses import MODE_OF_POSE, Loudness, PoseTracker, load_calibration  # noqa: E402
+import gestures  # noqa: E402
+from poses import MODE_OF_POSE, LearnedPoses, Loudness, PoseTracker, load_calibration  # noqa: E402
 from vexo_open.sync import Band  # noqa: E402
 
 HTTP_PORT = 8000
@@ -118,7 +119,11 @@ class Cast:
     def __init__(self, band, screen, voice):
         self.band, self.screen, self.voice = band, screen, voice
         cal = load_calibration()
-        self.poses = PoseTracker(cal)
+        self.poses = LearnedPoses() if gestures.POSE_MODEL.exists() else PoseTracker(cal)
+        self.gest = gestures.LiveDetector() if gestures.MODEL.exists() else None
+        self.fast = self.gest is not None or isinstance(self.poses, LearnedPoses)
+        self.paused, self.pause_started = False, 0.0
+        self.unacked = None                   # (reminder, threading.Event) waiting for a thumbs up
         self.loud = Loudness(cal)
         self.segments = deque(maxlen=500)
         self.audio_t0 = None
@@ -138,13 +143,20 @@ class Cast:
         self.last_partial = 0.0
         self.cmd_lock = threading.Lock()
         threading.Thread(target=self._command_loop, daemon=True).start()
-        screen.snapshot = lambda: [self.reminders_msg()]
+        screen.snapshot = lambda: [self.reminders_msg(), json.dumps({"kind": "mic", "t": time.time(), "on": not self.paused})]
 
     # ---- band events (run on the band's handler thread; keep short)
 
     def on_motion(self, m):
-        pose = self.poses.feed(m.ax, m.ay, m.az)
         now = time.time()
+        if isinstance(self.poses, LearnedPoses):
+            pose = self.poses.feed(m.ax, m.ay, m.az, m.t, now)
+        else:
+            pose = self.poses.feed(m.ax, m.ay, m.az)
+        if self.gest is not None:
+            hit = self.gest.feed(m.t, m.ax, m.ay, m.az)
+            if hit:
+                self.pool.submit(self.on_gesture, *hit)
         if pose != self.last_pose_sent or now - self.last_motion_push > 0.5:
             self.last_pose_sent, self.last_motion_push = pose, now
             self.screen.send("pose", pose=pose, mode=MODE_OF_POSE.get(pose, "ambient"),
@@ -354,7 +366,46 @@ class Cast:
         print("[reminder] due:", r["task"])
         self.screen.send("reminder", **r)
         self.screen.send("reminders", items=self.scheduler.pending())
-        self.voice.say("Reminder: %s." % r["task"])
+        acked = threading.Event()
+        self.unacked = (r, acked)
+
+        def nag():                            # repeat until a thumbs up, three times at most
+            for _ in range(3):
+                self.voice.say("Reminder: %s." % r["task"])
+                if acked.wait(12):
+                    return
+            if self.unacked and self.unacked[0] is r:
+                self.unacked = None
+        threading.Thread(target=nag, daemon=True).start()
+
+    # ---- gestures
+
+    def on_gesture(self, label, prob):
+        print("[gesture] %s (%.2f)" % (label, prob))
+        self.screen.send("gesture", label=label, prob=prob)
+        if label == "fist":
+            self.toggle_pause()
+        elif label == "thumbs_up" and self.unacked:
+            r, acked = self.unacked
+            self.unacked = None
+            acked.set()
+            self.card(uuid.uuid4().hex[:8], "done", "command", "Thumbs up", result="Acknowledged: %s" % r["task"])
+            self.voice.say("Got it.")
+
+    def toggle_pause(self):
+        """Fist: the microphone really turns off (the band's blue light goes out)."""
+        if not self.paused:
+            self.paused, self.pause_started = True, time.time()
+            self.band.configure(audio=False, mic_level=False)
+            self.screen.send("mic", on=False)
+            self.voice.say("Off the record.")
+        else:
+            self.band.configure(audio=True, mic_level=True)
+            if self.audio_t0 is not None:     # Deepgram's clock only counts audio it received
+                self.audio_t0 += time.time() - self.pause_started
+            self.paused = False
+            self.screen.send("mic", on=True)
+            self.voice.say("Listening.")
 
     def status(self):
         pending = self.scheduler.pending()
@@ -431,7 +482,11 @@ def main():
     band.on("mic-level", cast.on_mic)
     band.on("audio", cast.on_audio)
     band.on("double-tap", cast.on_double_tap)
-    band.configure(motion=50, events=True, audio=True, mic_level=True)
+    if cast.fast:        # 416 accelerometer readings a second: the most Bluetooth carries next to the mic
+        band.configure(motion=gestures.RATE, sensors="accel", events=True, audio=True, mic_level=True)
+    else:
+        band.configure(motion=50, events=True, audio=True, mic_level=True)
+    band.on("notice", lambda n: print("[band notice]", getattr(n, "kind", n)))
     print("Microphone on (solid blue light). Tell people nearby. Screen: http://localhost:%d" % HTTP_PORT)
 
     async def run():

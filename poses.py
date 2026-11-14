@@ -129,3 +129,29 @@ def load_calibration():
         return json.loads(CALIBRATION.read_text())
     except (OSError, ValueError):
         return {}
+
+
+class LearnedPoses(PoseTracker):
+    """Same interface as PoseTracker, but poses come from the model trained in the lab
+    (data/gestures/pose_model.pkl) on 20 s varied recordings of each pose."""
+    NAME = {"raised": "mouth", "rest": "rest_table", "side": "side"}
+
+    def __init__(self):
+        import gestures
+        self.live = gestures.LivePose()
+        self.pose = "moving"
+        self.history = deque(maxlen=4000)        # one entry per 50 ms: over 3 minutes
+        self.last_angle = None
+        self._last_hist = 0.0
+
+    @property
+    def calibrated(self):
+        return True
+
+    def feed(self, ax, ay, az, t_ms=None, now=None):
+        now = now or time.time()
+        self.pose = self.NAME.get(self.live.feed(t_ms if t_ms is not None else now * 1000, ax, ay, az), "moving")
+        if now - self._last_hist >= 0.05:
+            self._last_hist = now
+            self.history.append((now, self.pose))
+        return self.pose

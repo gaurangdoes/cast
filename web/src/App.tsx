@@ -18,6 +18,8 @@ export default function App() {
   return (
     <>
       {state.banner && <DueBanner key={state.banner.key} banner={state.banner} onDismiss={dismissBanner} />}
+      {!state.micOn && <div className="offrecord">Off the record · microphone is off · close your fist to resume</div>}
+      {state.gesture && <GestureToast key={state.gesture.at} label={state.gesture.label} />}
       <div className="app">
         <WristPanel
           conn={state.conn} pose={state.pose} mode={state.mode} angle={state.angle}
@@ -31,6 +33,12 @@ export default function App() {
       </div>
     </>
   )
+}
+
+function GestureToast({ label }: { label: string }) {
+  const [show, setShow] = useState(true)
+  useEffect(() => { const t = window.setTimeout(() => setShow(false), 1600); return () => window.clearTimeout(t) }, [])
+  return show ? <div className="gtoast">{label === 'fist' ? '✊ Fist' : label === 'thumbs_up' ? '👍 Thumbs up' : label}</div> : null
 }
 
 function ConnStatus({ conn }: { conn: ConnState }) {
