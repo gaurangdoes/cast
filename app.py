@@ -278,7 +278,7 @@ class Cast:
         mode = MODE_OF_POSE.get(pose, "ambient")
         is_wearer = vid == self.voices.wearer_id
         # "hey Hardik, ..." a moment ago + a new, unnamed voice answering = that voice is Hardik
-        if (self.pending_name and not is_wearer and self.voices.wearer_id is not None
+        if (self.pending_name and not is_wearer and vid >= 0 and self.voices.wearer_id is not None
                 and vid not in self.voices.names and time.time() - self.pending_name[1] < 25
                 and len(run["text"].split()) >= 2):
             self.set_name(vid, self.pending_name[0], "answered when you said their name")
@@ -347,8 +347,12 @@ class Cast:
             print("[names] failed:", e)
             return
         vid = entry["speaker"]
-        if self_name and vid != self.voices.wearer_id:
+        # only name a voice once Cast knows which voice is the wearer, and never from a guess
+        if (self_name and vid >= 0 and self.voices.wearer_id is not None and vid != self.voices.wearer_id
+                and entry.get("voice_sim", 0) >= 0.42):
             self.set_name(vid, self_name, "said their own name")
+        elif self_name and vid < 0 and self.voices.wearer_id is not None:
+            self.pending_name = (self_name, time.time())    # their next longer sentence gets the name
         if addressed and vid == self.voices.wearer_id and addressed not in self.voices.names.values():
             self.pending_name = (addressed, time.time())
             print("[names] you addressed %s; the next new voice to answer gets that name" % addressed)

@@ -10,7 +10,7 @@ const POSE_NAME: Record<string, string> = {
   mouth: 'Wrist to mouth', ear: 'Wrist raised', rest_table: 'Resting', side: 'At your side',
   chest: 'On chest', extended: 'Arm out', glance: 'Glance', moving: 'Moving',
 }
-const spkColor = (s: number | null | undefined) => `var(--spk${(s ?? 0) % 4})`
+const spkColor = (s: number | null | undefined) => (s != null && s < 0 ? "var(--muted)" : `var(--spk${(s ?? 0) % 4})`)
 const modeColor = (m: string | undefined) => (m && MODE_COLOR[m]) || 'var(--muted)'
 
 export default function App() {
@@ -88,7 +88,7 @@ function TranscriptPanel({ lines, partial, names }: { lines: Line[]; partial: st
       <div ref={ref} className="transcript">
         {lines.length === 0 && <div className="empty">Waiting for speech…</div>}
         {lines.map((m) => {
-          const who = m.is_wearer ? `You` : (names[String(m.speaker)] ?? `Speaker ${m.speaker}`)
+          const who = m.is_wearer ? `You` : m.speaker < 0 ? `Someone` : (names[String(m.speaker)] ?? `Speaker ${m.speaker}`)
           return (
             <div key={m.key} className={`line ${m.mode ?? ''}`}>
               <div className="who" style={{ color: spkColor(m.speaker) }}>{who}</div>

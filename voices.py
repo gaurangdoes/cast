@@ -11,7 +11,8 @@ import threading
 import numpy as np
 
 SAME_VOICE = 0.42        # cosine similarity above this: same person (measured: same voice 0.8-0.9 on long speech)
-NEW_SPEAKER_SECONDS = 2.0  # need at least this much audio to start a new speaker
+NEW_SPEAKER_SECONDS = 1.5  # need at least this much audio to start a new speaker
+UNKNOWN = -1               # heard, but too short to say who
 MERGE_AT = 0.6           # two clusters this similar are the same person
 MIN_SECONDS = 0.7        # shorter slices give unreliable voiceprints
 SAMPLE_RATE = 16000
@@ -52,7 +53,11 @@ class Voices:
                 if sim > best_sim:
                     best, best_sim = s, sim
             confident = seconds >= NEW_SPEAKER_SECONDS
-            if best is not None and (best_sim >= SAME_VOICE or not confident):
+            if best is not None and not confident and best_sim < SAME_VOICE:
+                # too short to start a new speaker, and it does not sound like anyone known:
+                # say "unknown" rather than pin it on the closest voice
+                return UNKNOWN, best_sim
+            if best is not None and best_sim >= SAME_VOICE:
                 if confident and best_sim >= SAME_VOICE:      # only learn from good evidence
                     c = best["centroid"] * best["n"] + e
                     best["centroid"] = c / (np.linalg.norm(c) or 1.0)
