@@ -291,6 +291,18 @@ class Cast:
                 self.turn = {"start": start, "end": end, "vid": vid if vid is not None else UNKNOWN}
             if vid is None:
                 vid = UNKNOWN
+            if vid == UNKNOWN and end - self.turn["start"] >= 5.0:
+                # five seconds of someone nobody recognises: a new person joins the conversation
+                t0 = self.audio_t0 or time.time()
+                level = self.loud.level_during(t0 + self.turn["start"], t0 + end)
+                if level is None or level - getattr(self, "db_shift", 0) > RAISED_DB + 3:   # not the wearer up close
+                    nid = self.voices.discover(self.audio.slice(max(self.turn["start"], end - 8.0), end + 0.05))
+                    if nid is not None:
+                        vid = self.turn["vid"] = nid
+                        print("[voices] new person: %s" % self.voices.names[nid])
+                        self.screen.send("names", names={str(k): v for k, v in self.voices.names.items()})
+                        self.card(uuid.uuid4().hex[:8], "done", "command", "New voice",
+                                  result="%s joined the conversation" % self.voices.names[nid])
             self.last_run_end = end
             vid = self.voices.resolve(vid)
             self.last_voice = vid

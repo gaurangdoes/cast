@@ -14,6 +14,7 @@ import numpy as np
 
 SAME_VOICE = 0.42        # cosine similarity above this: same person (measured: same voice 0.8-0.9 on long speech)
 NEW_SPEAKER_SECONDS = 1.5  # need at least this much audio to start a new speaker
+NEW_PERSON_BELOW = 0.55    # 5 s of speech less similar than this to every known voice: someone new
 UNKNOWN = -1               # heard, but too short to say who
 MERGE_AT = 0.6           # two clusters this similar are the same person
 MIN_SECONDS = 0.7        # shorter slices give unreliable voiceprints
@@ -109,9 +110,28 @@ class Voices:
         self.mu = [np.mean([ex[m] for exs in raw.values() for ex in exs], axis=0) for m in range(n_models)]
         self.enrolled = {i: [[self._unit(ex[m] - self.mu[m]) for m in range(n_models)] for ex in exs]
                          for i, exs in raw.items()}
+        self.plain = {i: [[self._unit(ex[m]) for m in range(n_models)] for ex in exs] for i, exs in raw.items()}
         self.wearer_id = 0
         self.labels = labels
         return True
+
+    def discover(self, pcm16):
+        """A long stretch (5 s+) from a voice that matches nobody enrolled becomes a new person.
+        Measured on this band with 5 s clips: a known voice scores 0.61+ against itself (lowest
+        10%), a never-heard voice 0.56 or less against anyone (highest 10%)."""
+        if not self.enrolled or len(pcm16) / (SAMPLE_RATE * 2) < 5.0:
+            return None
+        raw = [self._unit(v) for v in self.embed_all(pcm16)]
+        best = max(float(np.mean([max(float(raw[m] @ ex[m]) for ex in exs) for m in range(len(raw))]))
+                   for exs in self.plain.values())
+        if best >= NEW_PERSON_BELOW:
+            return None
+        with self.lock:
+            nid = max(self.enrolled) + 1
+            self.plain[nid] = [raw]
+            self.enrolled[nid] = [[self._unit(v - mu) for v, mu in zip(self.embed_all(pcm16), self.mu)]]
+            self.names[nid] = "Person %d" % (nid + 1)
+        return nid
 
     @staticmethod
     def _unit(e):
