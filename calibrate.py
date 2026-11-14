@@ -108,6 +108,7 @@ def angle_deg(a, b):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("number", nargs="?", type=int, help="band number on the bag, e.g. 42")
+    p.add_argument("--usb", action="store_true", help="band on the USB cable instead of Bluetooth")
     p.add_argument("--sim", action="store_true", help="use the kit's pretend band")
     p.add_argument("--skip-talk", action="store_true", help="only record poses")
     args = p.parse_args()
@@ -115,7 +116,7 @@ def main():
         p.error("give your band number (on the bag), or --sim")
 
     number = args.number or 42
-    band = Band.connect(number, "sim" if args.sim else "ble")
+    band = Band.connect(number, "sim" if args.sim else ("serial" if args.usb else "ble"))
     print("Connected to", band.name)
 
     rec = Recorder()

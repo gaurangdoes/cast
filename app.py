@@ -270,6 +270,7 @@ def serve_http():
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("number", nargs="?", type=int, help="band number on the bag")
+    p.add_argument("--usb", action="store_true", help="band on the USB cable instead of Bluetooth")
     p.add_argument("--sim", action="store_true", help="pretend band with the kit's sample speech")
     args = p.parse_args()
     if not args.sim and args.number is None:
@@ -284,7 +285,7 @@ def main():
         import kit
         from vexo_open import audio
         extra["audio_packets"] = audio.ogg_packets(kit.SAMPLE_SPEECH)
-    band = Band.connect(args.number or 42, "sim" if args.sim else "ble", **extra)
+    band = Band.connect(args.number or 42, "sim" if args.sim else ("serial" if args.usb else "ble"), **extra)
     print("Connected to", band.name)
 
     cast = Cast(band, screen, voice)
