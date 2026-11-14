@@ -48,6 +48,7 @@ WEARER_MIN = 0.6
 REFUSE_BELOW = 0.35     # only refuse when fairly sure it's someone else
 COMMAND_SETTLE_S = 1.2  # wait this long after the last raised-wrist words before acting
 CLIP_SECONDS = 30
+RAISED_DB = 14          # at or below this loudness the wrist is at the mouth
 NAME_HINT = re.compile(r"\b(hey|hi|hello|yo|thanks|thank you|i'm|i am|this is|my name)\b", re.I)
 CONTEXT_S = 6.0          # seconds of earlier audio given to Nemotron with each sentence
 
@@ -188,6 +189,12 @@ class Cast:
         except Exception:  # noqa: BLE001 - a bad packet must not stop transcription
             pass
 
+    def on_notice(self, n):
+        kind = n.get("kind") if isinstance(n, dict) else getattr(n, "kind", n)
+        self.notices = getattr(self, "notices", 0) + 1
+        if self.notices in (1, 10, 100) or self.notices % 500 == 0:
+            print("[band notice] %s (x%d)" % (kind, self.notices))
+
     def on_double_tap(self, e):
         self.pool.submit(self.toggle_pause)       # firmware tap detection: the reliable way to pause
 
@@ -261,6 +268,11 @@ class Cast:
             return                                   # that was Cast's own voice
         pose = self.poses.pose_during(start, end)
         rms = self.loud.level_during(start, end)
+        if rms is not None and rms <= RAISED_DB and pose != "mouth":
+            # this loud at the band only happens with the wrist at the mouth (calibrated: 12 dB
+            # there, 21 dB resting, 27 dB for someone else): trust it over a missed pose
+            print("[pose] %s -> mouth by loudness (%s dB)" % (pose, rms))
+            pose = "mouth"
         vid, sim = run["voice"], run["sim"]
         score = self.wearer_score(vid, rms, pose)
         mode = MODE_OF_POSE.get(pose, "ambient")
@@ -566,11 +578,15 @@ def main():
     band.on("audio", cast.on_audio)
     band.on("double-tap", cast.on_double_tap)
     band.on("tap", cast.on_tap)
-    if cast.fast:        # 208 readings a second of both sensors: the most Bluetooth carries next to the mic
+    try:
+        band.set_tx_power(4)                 # strongest radio: the room is full of Bluetooth
+    except Exception as e:  # noqa: BLE001
+        print("tx power:", e)
+    if cast.fast:        # 100 readings a second of both sensors; 208 flooded the link next to the mic
         band.configure(motion=gestures.RATE, sensors="both", events=True, audio=True, mic_level=True)
     else:
         band.configure(motion=50, events=True, audio=True, mic_level=True)
-    band.on("notice", lambda n: print("[band notice]", n if isinstance(n, dict) else getattr(n, "__dict__", n), "| streams now:", band.streams))
+    band.on("notice", cast.on_notice)
     print("Microphone on (solid blue light). Tell people nearby. Screen: http://localhost:%d" % HTTP_PORT)
 
     async def run():

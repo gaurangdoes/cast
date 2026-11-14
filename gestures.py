@@ -19,11 +19,20 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data" / "gestures"
 MODEL = DATA / "model.pkl"
-RATE = 208                             # accelerometer + gyroscope together, the most Bluetooth carries next to the mic
+RATE = 100                             # both sensors. 208/s flooded the Bluetooth link next to the mic (dropped data)
 PRE_S, POST_S = 0.35, 0.85            # window around an activity peak
-HP_K = 5                               # moving-average length for the high-pass (~24 ms)
-LP_K = 21                              # ~0.1 s smoothing for orientation
-SHIFTS = (-16, -8, 0, 8, 16)           # each rep is also used shifted by up to 77 ms
+HP_K = 3                               # moving-average length for the high-pass (~30 ms)
+LP_K = 11                              # ~0.1 s smoothing for orientation
+SHIFTS = (-8, -4, 0, 4, 8)             # each rep is also used shifted by up to 80 ms
+
+
+def load(f):
+    """A recording, thinned to about RATE readings a second (they were made at 208 or 416)."""
+    d = np.load(f)
+    t, acc = d["t"], d["acc"]
+    rate = (len(t) - 1) / max(1e-6, (t[-1] - t[0]) / 1000.0)
+    step = max(1, int(round(rate / RATE)))
+    return {"t": t[::step], "acc": acc[::step], "cues": d["cues"]}
 
 
 def _movavg(x, k):
@@ -143,7 +152,7 @@ class Recordings:
             label = f.stem.rsplit("_", 1)[0]
             if label.startswith("pose_"):
                 continue
-            d = np.load(f)
+            d = load(f)
             a = d["acc"]
             if a.ndim != 2 or a.shape[1] < 6 or len(a) < RATE:
                 continue                                  # older accelerometer-only recording
@@ -220,7 +229,7 @@ class LiveDetector:
             label = f.stem.rsplit("_", 1)[0]
             if label == "none" or label.startswith("pose_"):
                 continue
-            d = np.load(f)
+            d = load(f)
             if d["acc"].ndim != 2 or d["acc"].shape[1] < 6:
                 continue
             act = activity(d["acc"])            # on the whole recording: no edge effects
@@ -277,7 +286,7 @@ def pose_dataset():
     win = int(POSE_WIN_S * RATE)
     for f in sorted(DATA.glob("pose_*.npz")):
         label = f.stem.rsplit("_", 1)[0][len("pose_"):]
-        acc = np.load(f)["acc"][:, :3]
+        acc = load(f)["acc"][:, :3]
         acc = acc[int(1.0 * RATE):]                     # skip the first second (getting into position)
         for i in range(0, len(acc) - win, win // 2):     # 50% overlap
             X.append(pose_features(acc[i:i + win]))
