@@ -298,3 +298,8 @@ h2 { font-family: var(--mono); font-weight: 500; font-size: 12px; letter-spacing
 .who-input { font: inherit; font-weight: 600; width: 11em; padding: 1px 6px; border: 1px solid var(--accent); border-radius: 6px; background: var(--panel); color: var(--fg); }
 .who-hint { font-weight: 400; font-size: .85em; opacity: .8; }
 .who-ask:hover .who-hint { text-decoration: underline; }
+
+/* lines spoken to Cast: a quiet outlined row, no bar */
+.line.to-cast { background: var(--inset); box-shadow: none; border: 1px solid var(--line); border-radius: 10px; }
+.line.to-cast .text { font-weight: 400; }
+.to-cast-label { font-family: var(--body); font-size: 11px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
