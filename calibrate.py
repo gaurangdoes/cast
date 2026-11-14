@@ -27,7 +27,7 @@ POSES = [
     ("rest_table", "Rest your forearm on the table"),
     ("side", "Let your arm hang at your side"),
     ("chest", "Hold the band against your chest, forearm across your body"),
-    ("extended", "Hold your arm out toward someone, palm up"),
+    ("extended", "Hold your arm out straight in front of you, palm down"),
     ("glance", "Look at the band like checking a watch"),
 ]
 

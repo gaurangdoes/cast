@@ -122,6 +122,7 @@ class Cast:
         self.pool = ThreadPoolExecutor(max_workers=3)
         self.scheduler = Scheduler(self.on_reminder_due)
         self.last_glance_status = 0.0
+        self.speaker_votes = {}         # diarized speaker id -> (+ wearer / - not wearer) evidence
         screen.snapshot = lambda: [self.reminders_msg()]
 
     # ---- band events (run on the band's handler thread; keep short)
@@ -163,7 +164,7 @@ class Cast:
             return                                   # that was Cast's own voice
         pose = self.poses.pose_during(start, end)
         rms = self.loud.level_during(start, end)
-        score = self.loud.wearer_score(rms, pose)
+        score = self.wearer_score(seg["speaker"], rms, pose)
         mode = MODE_OF_POSE.get(pose, "ambient")
         entry = {"speaker": seg["speaker"], "text": seg["text"], "start": start, "end": end,
                  "pose": pose, "rms_db": rms, "wearer": score, "mode": mode}
@@ -177,6 +178,26 @@ class Cast:
                 self.screen.send("action", status="refused", mode=mode, text=entry["text"],
                                  reason="Not the wearer (score %.2f)" % score)
                 self.voice.say("Only the wearer can do that.")
+
+    def wearer_score(self, speaker, rms, pose):
+        """Loudness decides when the wrist is raised (clear 15 dB gap in calibration).
+        Each confident raised-wrist sentence teaches Cast which speaker label is the wearer,
+        so it keeps recognising them with the arm down, where loudness can't tell."""
+        loud = self.loud.wearer_score(rms, pose)
+        if loud is not None:
+            if loud >= 0.8:
+                self.speaker_votes[speaker] = self.speaker_votes.get(speaker, 0) + 1
+            elif loud <= 0.2:
+                self.speaker_votes[speaker] = self.speaker_votes.get(speaker, 0) - 1
+            known = self.speaker_votes.get(speaker, 0)
+            # blend: a known wearer voice nudges up, a known other voice nudges down
+            return round(min(1.0, max(0.0, loud + 0.1 * max(-2, min(2, known)))), 2)
+        votes = self.speaker_votes.get(speaker, 0)
+        if votes > 0:
+            return 0.85
+        if votes < 0 or any(v > 0 for v in self.speaker_votes.values()):
+            return 0.15                 # someone else is already known to be the wearer
+        return 0.5
 
     def act(self, mode, entry):
         self.screen.send("action", status="working", mode=mode, text=entry["text"], result="Thinking...")

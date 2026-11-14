@@ -100,7 +100,7 @@ class Loudness:
         for pose in ("mouth", "rest_table", "side"):
             you = talk.get(pose + "/you", {}).get("rms_db_median")
             mate = talk.get(pose + "/teammate", {}).get("rms_db_median")
-            if you is not None and mate is not None and mate > you:
+            if you is not None and mate is not None and mate - you >= 6:
                 self.thresholds[pose] = ((you + mate) / 2.0, max(2.0, (mate - you) / 4.0))
 
     def feed(self, rms_db, now=None):
@@ -113,11 +113,14 @@ class Loudness:
         return vals[max(0, len(vals) // 4)]      # a loud-ish reading: 25th percentile of dB
 
     def wearer_score(self, rms_db, pose):
-        """0..1. Uses the calibrated midpoint for this pose (or the nearest one we have)."""
+        """0..1 from loudness, or None when loudness can't tell for this pose.
+        Calibration showed a clear gap only with the wrist raised (mouth/ear)."""
         if rms_db is None:
-            return 0.5
-        key = pose if pose in self.thresholds else ("mouth" if pose in ("mouth", "ear") else "rest_table")
-        mid, width = self.thresholds.get(key) or self.thresholds.get("rest_table") or (38.0, 4.0)
+            return None
+        key = "mouth" if pose in ("mouth", "ear") else pose
+        if key not in self.thresholds:
+            return None
+        mid, width = self.thresholds[key]
         return round(1.0 / (1.0 + math.exp((rms_db - mid) / width)), 2)
 
 
