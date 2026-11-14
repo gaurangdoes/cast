@@ -307,3 +307,7 @@ h2 { font-family: var(--mono); font-weight: 500; font-size: 12px; letter-spacing
 /* what is being said right now, as a row in the conversation */
 .line.live .text { color: var(--muted); }
 .line.live .avatar { background: transparent; border: 1px dashed var(--line); }
+
+.arm-usable { color: var(--ok); }
+.arm-marginal { color: var(--warn); }
+.arm-absent { color: var(--bad); }

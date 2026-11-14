@@ -21,7 +21,10 @@ type Lab = {
   last: { label: string; prob: number; at: number } | null; counts: Record<string, number>
   pose_report?: LabReport | null
   voice_counts?: Record<string, number>
+  arm?: ArmResult
 }
+type ArmRec = { windows: number; rate: number; median_mg: number; p10_mg: number; p90_mg: number }
+type ArmResult = { recordings: Record<string, ArmRec>; verdict: { line_mg: number; share_above: number; word: string; text: string } | null; error?: string }
 type Live = { gravity: number[] | null; gyro: number; rms_db: number | null; nearest: { pose: string; deg: number } | null; pose?: string | null; pose_raw?: [string, number] | null }
 
 function wsUrl() {
@@ -219,6 +222,12 @@ function AnalysisView({ a }: { a: Analysis }) {
   )
 }
 
+const ARM_STEPS: { id: string; name: string; how: string }[] = [
+  { id: 'silent', name: 'Nobody talking', how: 'Everyone quiet, arm resting, keep still' },
+  { id: 'wearer', name: 'Wearer talking', how: 'The wearer talks the whole time, arm resting on the table, not at the mouth' },
+  { id: 'other', name: 'Someone else talking', how: 'The wearer is silent; another person talks loudly from half a metre away' },
+]
+
 const POSES: { id: string; name: string; how: string }[] = [
   { id: 'raised', name: 'Wrist raised', how: 'Band up near your mouth, like talking into it' },
   { id: 'rest', name: 'Resting', how: 'Arm on the table or your lap' },
@@ -250,11 +259,11 @@ function GestureLab({ lab, send, live }: { lab: Lab; send: (c: object) => void; 
 
       {rec && (
         <div className={`lab-rec ${rec.phase}`}>
-          <div className="lab-rec-name">{rec.label.startsWith('voice_') ? 'Voice · keep talking' : rec.label === 'none' ? 'Normal movement' : rec.label.startsWith('pose_') ? POSES.find((g) => 'pose_' + g.id === rec.label)?.name : GESTURES.find((g) => g.id === rec.label)?.name}</div>
-          {rec.label === 'none' || rec.label.startsWith('pose_') || rec.label.startsWith('voice_')
+          <div className="lab-rec-name">{rec.label.startsWith('arm_') ? 'Voice through the arm · arm resting, keep still' : rec.label.startsWith('voice_') ? 'Voice · keep talking' : rec.label === 'none' ? 'Normal movement' : rec.label.startsWith('pose_') ? POSES.find((g) => 'pose_' + g.id === rec.label)?.name : GESTURES.find((g) => g.id === rec.label)?.name}</div>
+          {rec.label === 'none' || rec.label.startsWith('pose_') || rec.label.startsWith('voice_') || rec.label.startsWith('arm_')
             ? <div className="lab-rec-big">{rec.phase === 'ready' ? 'Get ready' : `${rec.left}s`}</div>
             : <div className="lab-rec-big">{rec.phase === 'ready' ? 'Get ready' : rec.phase === 'now' ? 'NOW' : `${rec.rep} / ${rec.reps}`}</div>}
-          <div className="cal-hint">{rec.label === 'none' ? 'Talk with your hands, scratch, rest. No gestures.' : rec.label.startsWith('pose_') ? 'Hold the pose but keep varying it: angles, sit, stand.' : GESTURES.find((g) => g.id === rec.label)?.how}</div>
+          <div className="cal-hint">{rec.label.startsWith('arm_') ? (ARM_STEPS.find((a) => 'arm_' + a.id === rec.label)?.how ?? '') : rec.label === 'none' ? 'Talk with your hands, scratch, rest. No gestures.' : rec.label.startsWith('pose_') ? 'Hold the pose but keep varying it: angles, sit, stand.' : GESTURES.find((g) => g.id === rec.label)?.how}</div>
         </div>
       )}
 
@@ -267,6 +276,29 @@ function GestureLab({ lab, send, live }: { lab: Lab; send: (c: object) => void; 
             <button className="btn" disabled={busy || lab.live} onClick={() => send({ cmd: 'voice_record', label: id, seconds: 40 })}>Record 40 s</button>
           </div>
         ))}
+      </div>
+      <div className="cal-sub">Voice through the arm (a test): can the motion sensor feel the wearer talking? Three 15 s recordings with the arm resting on the table.</div>
+      <div className="lab-grid">
+        {ARM_STEPS.map((a) => {
+          const r = lab.arm?.recordings?.[a.id]
+          return (
+            <div key={a.id} className="lab-card">
+              <div className="cal-step-title">{a.name}</div>
+              <div className="cal-step-ins">{a.how}</div>
+              <div className="lab-count">{r ? `median ${r.median_mg} mg · ${r.p10_mg}–${r.p90_mg} mg · ${r.rate}/s` : 'not recorded'}</div>
+              <button className="btn" disabled={busy || lab.live} onClick={() => send({ cmd: 'arm_record', label: a.id })}>Record 15 s</button>
+            </div>
+          )
+        })}
+        <div className="lab-card">
+          <div className="cal-step-title">Result</div>
+          {lab.arm?.verdict ? (
+            <>
+              <div className={`lab-acc arm-${lab.arm.verdict.word}`}>{lab.arm.verdict.word === 'usable' ? 'Usable' : lab.arm.verdict.word === 'marginal' ? 'Marginal' : 'No signal'}</div>
+              <div className="cal-step-ins">{Math.round(lab.arm.verdict.share_above * 100)}% of the wearer's half-seconds are above {lab.arm.verdict.line_mg} mg, the level 95% of the silent and other-person half-seconds stay under. {lab.arm.verdict.text}</div>
+            </>
+          ) : <div className="cal-step-ins">Record all three. Vibration between 70 and 200 Hz is compared; over 80% of the wearer's half-seconds above the other two means usable.</div>}
+        </div>
       </div>
       <div className="cal-sub">Poses: record 20 s each, changing it a little the whole time</div>
       <div className="lab-grid">

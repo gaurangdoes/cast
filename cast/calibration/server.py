@@ -22,7 +22,7 @@ import numpy as np  # noqa: E402
 import websockets  # noqa: E402
 
 from . import terminal as calibrate  # noqa: E402  (pose list, talk tests, summarize)
-from ..motion import gestures  # noqa: E402
+from ..motion import armvoice, gestures  # noqa: E402
 import subprocess  # noqa: E402
 from vexo_open.sync import Band  # noqa: E402
 
@@ -227,12 +227,75 @@ class Calib:
             self.lab["recording"] = None
             self.push_state()
 
+    # ---- can the band feel the wearer's voice through the arm? (a test: see motion/armvoice.py)
+
+    ARM_SAY = {
+        "silent": "Everyone stays quiet. Rest your arm on the table and keep still.",
+        "wearer": "The wearer talks the whole time, with the arm resting on the table. Not at the mouth.",
+        "other": "The wearer stays silent, arm resting. Someone else talks loudly from about half a metre away.",
+    }
+
+    def arm_record(self, label, seconds=15):
+        if self.status != "connected" or self.lab["recording"] or self.active or label not in self.ARM_SAY:
+            return
+        threading.Thread(target=self._arm_record, args=(label, seconds), daemon=True).start()
+
+    def _arm_record(self, label, seconds):
+        from vexo_open.audio import PcmDecoder
+        dec, chunks = PcmDecoder(), []
+        recording = [False]
+
+        def on_audio(a):
+            if recording[0]:
+                try:
+                    chunks.append(dec.feed(a))
+                except Exception:  # noqa: BLE001
+                    pass
+        try:
+            self.lab["recording"] = {"label": "arm_" + label, "rep": 0, "reps": 0, "phase": "ready", "left": seconds}
+            self.push_state()
+            self.say(self.ARM_SAY[label])
+            time.sleep(6.5)
+            self.band.on("audio", on_audio)
+            # the real operating condition: microphone on, accelerometer alone at 416 a second
+            self.band.configure(motion=416, sensors="accel", audio=True)
+            time.sleep(0.5)                                  # let the new rate settle
+            self.arm_buf = []
+            recording[0] = True
+            for left in range(seconds, 0, -1):
+                self.lab["recording"] = {"label": "arm_" + label, "rep": 0, "reps": 0, "phase": "go", "left": left}
+                self.push_state()
+                time.sleep(1)
+            recording[0] = False
+            buf, self.arm_buf = self.arm_buf, None
+            if buf and len(buf) > 400:
+                a = np.array(buf, dtype=np.float64)
+                armvoice.FOLDER.mkdir(parents=True, exist_ok=True)
+                np.savez(armvoice.FOLDER / ("%s_%d.npz" % (label, int(time.time()))), t=a[:, 0], acc=a[:, 1:4],
+                         pcm=np.frombuffer(b"".join(chunks), dtype=np.int16))
+            self.say("Done.")
+        finally:
+            self.arm_buf = None
+            self.lab["recording"] = None
+            try:
+                self.band.configure(audio=False)
+                self.band.configure(motion=50, sensors="both")
+            except Exception as e:  # noqa: BLE001
+                print("could not restore the band's settings:", e)
+            self.push_state()
+
+    def arm_state(self):
+        try:
+            return armvoice.analyse()
+        except Exception as e:  # noqa: BLE001
+            return {"recordings": {}, "verdict": None, "error": str(e)}
+
     def lab_state(self):
         vc = {}
         for f in (ROOT / "data" / "voices_lab").glob("*.pcm"):
             k = f.stem.rsplit("_", 1)[0]
             vc[k] = vc.get(k, 0) + 1
-        return dict(self.lab, counts=gestures.Recordings.counts(), voice_counts=vc)
+        return dict(self.lab, counts=gestures.Recordings.counts(), voice_counts=vc, arm=self.arm_state())
 
     # ---- band
 
@@ -257,6 +320,8 @@ class Calib:
         self.push_state()
 
     def on_motion(self, m):
+        if getattr(self, "arm_buf", None) is not None:
+            self.arm_buf.append((m.t, m.ax, m.ay, m.az))
         if self.lab_buf is not None and m.gx is not None:
             self.lab_buf.append((m.t, m.ax, m.ay, m.az, m.gx, m.gy, m.gz))
         if getattr(self, "posemodel", None) is not None:
@@ -427,6 +492,8 @@ class Calib:
                     self.reset()
                 elif cmd.get("cmd") == "lab_record":
                     self.lab_record(str(cmd.get("label")), int(cmd.get("reps", 10)))
+                elif cmd.get("cmd") == "arm_record":
+                    self.arm_record(str(cmd.get("label")))
                 elif cmd.get("cmd") == "voice_record":
                     self.voice_record(str(cmd.get("label")), int(cmd.get("seconds", 40)))
                 elif cmd.get("cmd") == "lab_train":
