@@ -49,6 +49,7 @@ WEARER_MIN = 0.6
 REFUSE_BELOW = 0.35     # only refuse when fairly sure it's someone else
 COMMAND_SETTLE_S = 1.8  # wait this long after the last raised-wrist words before acting
 CLIP_SECONDS = 30
+FAINT_DB = 24           # quieter than this and not a known voice: background chatter, dropped
 SOFT_DB = 18            # the wearer's recognised voice at this level: a command if it is actionable
 NEAR_DB = 21            # wrist raised and the wearer's voice: softer speech still counts
 RAISED_DB = 14          # at or below this loudness someone is talking into the band
@@ -287,6 +288,8 @@ class Cast:
             return                                   # that was Cast's own voice
         pose = self.poses.pose_during(start, end)
         rms = self.loud.level_during(start, end)
+        if rms is not None:
+            rms -= getattr(self, "db_shift", 0)      # as if the mic were at the gain we calibrated with
         vid, sim = run["voice"], run["sim"]
         # Who is being talked to? Three signals, measured on this band: loudness at the mic
         # (12 dB at the mouth, 21 resting, 27 someone else), the wrist pose, and whose voice it is.
@@ -305,6 +308,11 @@ class Cast:
             pose = "rest_table"                      # wrist up, but not talking to the band
         score = self.wearer_score(vid, rms, pose)
         mode = MODE_OF_POSE.get(pose, "ambient")
+        if vid < 0 and mode == "ambient" and rms is not None and rms > FAINT_DB:
+            self.ignored = getattr(self, "ignored", 0) + 1      # faint and nobody we know: room noise
+            self.screen.send("ignored", count=self.ignored)
+            print("[noise] ignored (%s dB): %s" % (rms, run["text"][:60]))
+            return
         is_wearer = vid == self.voices.wearer_id
         # "hey Hardik, ..." a moment ago + a new, unnamed voice answering = that voice is Hardik
         if (self.pending_name and not is_wearer and vid >= 0 and self.voices.wearer_id is not None
@@ -652,6 +660,11 @@ def main():
         band.set_tx_power(4)                 # strongest radio: the room is full of Bluetooth
     except Exception as e:  # noqa: BLE001
         print("tx power:", e)
+    gain = float(os.environ.get("CAST_MIC_GAIN", "20"))
+    if gain != 20:
+        band.set_mic_gain(gain)
+        print("Mic gain %+.0f dB (loudness readings shift by %+.0f dB)" % (gain, 20 - gain))
+    cast.db_shift = 20 - gain
     if cast.fast:        # 100 readings a second of both sensors; 208 flooded the link next to the mic
         band.configure(motion=gestures.RATE, sensors="both", events=True, audio=True, mic_level=True)
     else:

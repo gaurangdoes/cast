@@ -25,6 +25,7 @@ export interface RemindersEvent extends Base {
 export type CastEvent =
   | PoseEvent | LevelEvent | PartialEvent | SegmentEvent | ActionEvent | ClipEvent | ReminderEvent | RemindersEvent
   | { kind: 'names'; t: number; names: Record<string, string> }
+  | { kind: 'ignored'; t: number; count: number }
   | { kind: 'mic'; t: number; on: boolean } | { kind: 'gesture'; t: number; label: string; prob: number }
 
 export interface Reminder {
