@@ -9,6 +9,7 @@ dependencies = [
     "av",               # Opus decoding
     "numpy",
     "websockets",       # the screen
+    "sounddevice",      # plays the streamed voice
     "torch",
     "torchaudio",
     "speechbrain",      # ECAPA voiceprints

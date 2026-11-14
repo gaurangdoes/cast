@@ -272,10 +272,12 @@ function TranscriptPanel({ lines, partial, names, details, micOn, onRename, onAs
             </div>
           )
         })}
-      </div>
-      <div className={`partial${partial ? ' on' : ''}`}>
-        <span className="partial-dots" aria-hidden="true"><i /><i /><i /></span>
-        <span className="partial-text">{partial || (micOn ? 'Listening…' : 'Paused')}</span>
+        {micOn && partial && (
+          <div className="line live" aria-live="off">
+            <div className="avatar" aria-hidden="true"><span className="partial-dots"><i /><i /><i /></span></div>
+            <div className="line-body"><div className="text">{partial}</div></div>
+          </div>
+        )}
       </div>
     </section>
   )

@@ -46,6 +46,7 @@ HTTP_PORT = 8000
 WS_PORT = 8765
 WEARER_MIN = 0.6
 REFUSE_BELOW = 0.35     # only refuse when fairly sure it's someone else
+COMMAND_SETTLE_FAST_S = 0.7  # ...or this long, when what was said already reads as a whole sentence
 COMMAND_SETTLE_S = 1.8  # wait this long after the last raised-wrist words before acting
 CLIP_SECONDS = 30
 NEW_PERSON_DB = 22      # a new voice must be quieter than this at the band (the wearer resting reads 21)
@@ -130,51 +131,106 @@ class Voice:
     def say(self, text):
         self.q.put(text)
 
+    def chime(self):
+        """A short sound the moment a command is accepted, so the wait for the reply is not silence."""
+        subprocess.Popen(["afplay", "-v", "0.6", "/System/Library/Sounds/Tink.aiff"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def prewarm(self, phrases):
+        """Generate the fixed replies ahead of time; they then play with no delay."""
+        def run():
+            for text in phrases:
+                try:
+                    self._gemini(text)
+                except Exception:  # noqa: BLE001
+                    return
+        if os.environ.get("CAST_TTS", "gemini") == "gemini":
+            threading.Thread(target=run, daemon=True).start()
+
     def _run(self):
         while True:
             text = self.q.get()
             try:
-                wav = self._gemini(text) if os.environ.get("CAST_TTS", "gemini") == "gemini" else None
+                if os.environ.get("CAST_TTS", "gemini") == "gemini":
+                    self._speak_gemini(text)
+                else:
+                    self._speak_mac(text)
             except Exception as e:  # noqa: BLE001
                 print("[voice] Gemini speech failed, using the Mac voice:", str(e)[:100])
-                wav = None
-            try:
-                if wav:
-                    path, seconds = wav
-                    self.spoke_from = time.time() - 0.2
-                    self.busy_until = time.time() + seconds + 0.6
-                    subprocess.run(["afplay", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                else:
-                    self.spoke_from = time.time() - 0.2
-                    self.busy_until = time.time() + 0.5 + len(text) * 0.07
-                    subprocess.run(["say", "-r", "205", text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception as e:  # noqa: BLE001
-                print("[voice] playback failed:", e)
+                try:
+                    self._speak_mac(text)
+                except Exception as e2:  # noqa: BLE001
+                    print("[voice] playback failed:", e2)
             self.busy_until = max(self.busy_until, time.time() + 0.4)
 
-    def _gemini(self, text):
+    def _speak_mac(self, text):
+        self.spoke_from = time.time() - 0.2
+        self.busy_until = time.time() + 0.5 + len(text) * 0.07
+        subprocess.run(["say", "-r", "205", text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _cache_path(self, text):
+        import hashlib
+        cache = ROOT / "data" / "tts"
+        cache.mkdir(parents=True, exist_ok=True)
+        key = hashlib.sha1(("%s|%s|%s" % (self.MODEL, self.NAME, text)).encode()).hexdigest()[:16]
+        return cache / (key + ".pcm")                    # 16-bit mono at 24 kHz
+
+    def _stream(self, text):
+        """Gemini speech as it is generated: the first audio arrives after about half a second
+        (measured), the rest within about a second. Yields raw 16-bit 24 kHz chunks."""
         import base64
-        import tempfile
         import urllib.request
-        import wave
         body = {"contents": [{"parts": [{"text": text}]}],
                 "generationConfig": {"responseModalities": ["AUDIO"], "speechConfig": {
                     "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self.NAME}}}}}
         req = urllib.request.Request(
-            "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent" % self.MODEL,
+            "https://generativelanguage.googleapis.com/v1beta/models/%s:streamGenerateContent?alt=sse" % self.MODEL,
             data=json.dumps(body).encode(),
             headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"], "Content-Type": "application/json"})
-        part = json.load(urllib.request.urlopen(req, timeout=5))["candidates"][0]["content"]["parts"][0]["inlineData"]
-        data = base64.b64decode(part["data"])
-        path = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
-        if "wav" in part.get("mimeType", ""):
-            Path(path).write_bytes(data)
-        else:                                            # raw 16-bit samples at 24 kHz
-            with wave.open(path, "wb") as w:
-                w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000); w.writeframes(data)
-        with wave.open(path, "rb") as w:
-            seconds = w.getnframes() / float(w.getframerate())
-        return path, seconds
+        with urllib.request.urlopen(req, timeout=6) as r:
+            for line in r:
+                if not line.startswith(b"data:"):
+                    continue
+                for part in json.loads(line[5:]).get("candidates", [{}])[0].get("content", {}).get("parts", []):
+                    data = part.get("inlineData", {}).get("data")
+                    if data:
+                        yield base64.b64decode(data)
+
+    def _gemini(self, text):
+        """Generate and cache a reply without playing it (used to prepare the fixed replies)."""
+        path = self._cache_path(text)
+        if not path.exists():
+            pcm = b"".join(self._stream(text))
+            if pcm:
+                path.write_bytes(pcm)
+        return str(path), path.stat().st_size / 48000.0
+
+    def _speak_gemini(self, text):
+        import sounddevice as sd
+        path = self._cache_path(text)
+        chunks = [path.read_bytes()] if path.exists() else self._stream(text)   # said before: no wait at all
+        got = bytearray()
+        out = None
+        try:
+            for chunk in chunks:
+                if out is None:                          # open the speaker when the first audio arrives
+                    out = sd.RawOutputStream(samplerate=24000, channels=1, dtype="int16")
+                    out.start()
+                    self.spoke_from = time.time() - 0.2
+                got += chunk
+                self.busy_until = self.spoke_from + len(got) / 48000.0 + 0.8
+                out.write(bytes(chunk))
+            if out is None:
+                raise RuntimeError("no audio came back")
+            left = self.spoke_from + 0.2 + len(got) / 48000.0 - time.time()
+            if left > 0:
+                time.sleep(left + 0.15)                  # let the last of it play out
+        finally:
+            if out is not None:
+                out.stop()
+                out.close()
+        if not path.exists() and got:
+            path.write_bytes(bytes(got))
 
     def speaking(self, t_start, t_end):
         """Did this stretch of heard speech overlap Cast's own voice?"""
@@ -198,7 +254,7 @@ class Cast:
         self.audio_t0 = None
         self.last_pose_sent = None
         self.last_motion_push = 0.0
-        self.pool = ThreadPoolExecutor(max_workers=3)
+        self.pool = ThreadPoolExecutor(max_workers=6)
         self.scheduler = Scheduler(self.on_reminder_due)
         self.last_glance_status = 0.0
         self.activity_ok = False              # set once the band's activity stream is on
@@ -478,6 +534,10 @@ class Cast:
                 self.pending_cmd["other"].append(
                     self.voices.wearer_id is not None and vid >= 0 and vid != self.voices.wearer_id)
                 self.pending_cmd["last"] = time.time()
+                said = " ".join(self.pending_cmd["texts"]).strip()
+                if len(said.split()) >= 3:           # read it now; if more words come, this guess is dropped
+                    tasks_now = [r["task"] for r in sorted(self.scheduler.pending(), key=lambda r: r.get("created", 0))]
+                    self.pending_cmd["guess"] = (said, self.pool.submit(brain.interpret_command, said, tasks_now))
 
     def _command_loop(self):
         while True:
@@ -487,8 +547,11 @@ class Cast:
                 if p is None:
                     continue
                 now = time.time()
+                said = " ".join(p["texts"]).strip()
+                finished = said[-1:] in ".?!" and len(said.split()) >= 4      # a whole sentence
+                settle = COMMAND_SETTLE_FAST_S if finished else COMMAND_SETTLE_S
                 if (now - p["first"] < COMMAND_MAX_S
-                        and (now - p["last"] < COMMAND_SETTLE_S or now - self.last_partial < 0.8)):
+                        and (now - p["last"] < settle or now - self.last_partial < min(settle, 0.8))):
                     continue                         # still talking
                 self.pending_cmd = None
             text = " ".join(p["texts"]).strip()
@@ -497,6 +560,8 @@ class Cast:
                 print("[command] ignored fragment:", text)
                 continue
             entry = dict(p["entry"], text=text, wearer=score, soft=p.get("soft", False))
+            guess = p.get("guess")
+            entry["parsed"] = guess[1] if guess and guess[0] == text else None
             if p["other"] and all(p["other"]):       # every part was someone else's voice
                 self.card(uuid.uuid4().hex[:8], "refused", "command", text,
                           reason="Not the wearer's voice (score %.2f)" % score)
@@ -635,14 +700,22 @@ class Cast:
     def act(self, mode, entry):
         aid = uuid.uuid4().hex[:8]
         if not entry.get("soft"):
+            self.voice.chime()                       # heard at once, before Gemini has answered
             self.card(aid, "working", mode, entry["text"], result="Thinking...")
         self.pool.submit(self._act, mode, entry, aid)
 
     def _act(self, mode, entry, aid):
         try:
             if mode == "command":
-                by_age = sorted(self.scheduler.pending(), key=lambda r: r.get("created", 0))
-                out = brain.interpret_command(entry["text"], [r["task"] for r in by_age])
+                out = None
+                if entry.get("parsed") is not None:
+                    try:
+                        out = entry["parsed"].result(timeout=10)      # already asked while you were finishing
+                    except Exception:  # noqa: BLE001
+                        out = None
+                if out is None:
+                    by_age = sorted(self.scheduler.pending(), key=lambda r: r.get("created", 0))
+                    out = brain.interpret_command(entry["text"], [r["task"] for r in by_age])
                 intent = out.get("intent")
                 if entry.get("soft") and intent not in ("task", "question", "label_speaker", "cancel_reminder"):
                     print("[command] soft, not actionable, ignored:", entry["text"])
@@ -885,6 +958,8 @@ def main():
     load_env()
 
     screen, voice = Screen(), Voice()
+    voice.prewarm(["Got it.", "Off the record.", "Listening.", "Only the wearer can do that.", "Done.",
+                   "There's nothing to cancel.", "Sorry, I couldn't do that."])
     threading.Thread(target=serve_http, daemon=True).start()
 
     extra = {}
