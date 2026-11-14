@@ -64,6 +64,9 @@ function applyEvent(s: CastState, m: CastEvent): CastState {
       return { ...s, lines, partial: '', wearer: m.wearer }
     }
     case 'action':
+      if (m.id && s.cards.some((c) => c.type === 'action' && c.ev.id === m.id)) {
+        return { ...s, cards: s.cards.map((c) => (c.type === 'action' && c.ev.id === m.id ? { ...c, ev: m } : c)) }
+      }
       return { ...s, cards: [{ key: nextKey(), type: 'action' as const, ev: m }, ...s.cards].slice(0, MAX_CARDS) }
     case 'clip':
       return { ...s, cards: [{ key: nextKey(), type: 'clip' as const, ev: m }, ...s.cards].slice(0, MAX_CARDS) }

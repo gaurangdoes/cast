@@ -21,6 +21,7 @@ import os
 import subprocess
 import sys
 import threading
+import uuid
 import time
 from collections import deque
 from pathlib import Path
@@ -42,6 +43,8 @@ from vexo_open.sync import Band  # noqa: E402
 HTTP_PORT = 8000
 WS_PORT = 8765
 WEARER_MIN = 0.6
+REFUSE_BELOW = 0.35     # only refuse when fairly sure it's someone else
+COMMAND_SETTLE_S = 1.2  # wait this long after the last raised-wrist words before acting
 CLIP_SECONDS = 30
 CONTEXT_S = 6.0          # seconds of earlier audio given to Nemotron with each sentence
 
@@ -131,6 +134,10 @@ class Cast:
         self.audio = AudioBuffer()
         self.decoder = PcmDecoder()
         self.last_voice = None
+        self.pending_cmd = None               # raised-wrist speech collected until the speaker pauses
+        self.last_partial = 0.0
+        self.cmd_lock = threading.Lock()
+        threading.Thread(target=self._command_loop, daemon=True).start()
         screen.snapshot = lambda: [self.reminders_msg()]
 
     # ---- band events (run on the band's handler thread; keep short)
@@ -167,6 +174,7 @@ class Cast:
     # ---- speech
 
     def on_partial(self, text):
+        self.last_partial = time.time()
         self.screen.send("partial", text=text)
 
     def on_segment(self, words):
@@ -240,12 +248,39 @@ class Cast:
         print("[voice %s%s sim %.2f | %-10s | wearer %.2f | %s] %s" % (
             vid, "*" if entry["is_wearer"] else "", sim, pose, score, mode, run["text"]))
         if mode in ("command", "ask"):
-            if score >= WEARER_MIN:
-                self.act(mode, entry)
-            else:
-                self.screen.send("action", status="refused", mode=mode, text=entry["text"],
-                                 reason="Not the wearer (score %.2f)" % score)
+            with self.cmd_lock:                      # collect until the speaker pauses
+                if self.pending_cmd is None:
+                    self.pending_cmd = {"texts": [], "scores": [], "entry": entry}
+                self.pending_cmd["texts"].append(entry["text"])
+                self.pending_cmd["scores"].append(score)
+                self.pending_cmd["last"] = time.time()
+
+    def _command_loop(self):
+        while True:
+            time.sleep(0.2)
+            with self.cmd_lock:
+                p = self.pending_cmd
+                if p is None:
+                    continue
+                now = time.time()
+                if now - p["last"] < COMMAND_SETTLE_S or now - self.last_partial < 0.8:
+                    continue                         # still talking
+                self.pending_cmd = None
+            text = " ".join(p["texts"]).strip()
+            score = max(p["scores"])
+            if len(text.split()) < 3:
+                print("[command] ignored fragment:", text)
+                continue
+            entry = dict(p["entry"], text=text, wearer=score)
+            if score < REFUSE_BELOW:
+                self.card(uuid.uuid4().hex[:8], "refused", "command", text,
+                          reason="Not the wearer's voice (score %.2f)" % score)
                 self.voice.say("Only the wearer can do that.")
+            else:
+                self.act("command", entry)
+
+    def card(self, aid, status, mode, text, result=None, reason=None):
+        self.screen.send("action", id=aid, status=status, mode=mode, text=text, result=result, reason=reason)
 
     def wearer_score(self, voice_id, rms, pose):
         """Wrist raised: loudness decides (15 dB gap in calibration), and confident sentences
@@ -265,10 +300,11 @@ class Cast:
         return 0.9 if voice_id == self.voices.wearer_id else 0.1
 
     def act(self, mode, entry):
-        self.screen.send("action", status="working", mode=mode, text=entry["text"], result="Thinking...")
-        self.pool.submit(self._act, mode, entry)
+        aid = uuid.uuid4().hex[:8]
+        self.card(aid, "working", mode, entry["text"], result="Thinking...")
+        self.pool.submit(self._act, mode, entry, aid)
 
-    def _act(self, mode, entry):
+    def _act(self, mode, entry, aid):
         try:
             if mode == "command":
                 out = brain.interpret_command(entry["text"])
@@ -278,29 +314,29 @@ class Cast:
                     say = out.get("say") or "Okay, I'll remind you %s." % spoken_time(r["remind_at"])
                     self.screen.send("reminder", status="scheduled", **r)
                     self.screen.send("reminders", items=self.scheduler.pending())
-                    self.screen.send("action", status="done", mode=mode, text=entry["text"],
+                    self.screen.send("action", id=aid, status="done", mode=mode, text=entry["text"],
                                      result="Reminder: %s %s" % (r["task"], spoken_time(r["remind_at"])))
                 elif intent == "question":
                     say = brain.answer_question(entry["text"], self.transcript_lines(), self.reminder_lines())
-                    self.screen.send("action", status="done", mode="ask", text=entry["text"], result=say)
+                    self.screen.send("action", id=aid, status="done", mode="ask", text=entry["text"], result=say)
                 elif intent == "cancel_reminder":
                     r = self.scheduler.cancel_latest()
                     say = "Cancelled %s." % r["task"] if r else "There's nothing to cancel."
                     if r:
                         self.screen.send("reminder", status="cancelled", **r)
                     self.screen.send("reminders", items=self.scheduler.pending())
-                    self.screen.send("action", status="done", mode=mode, text=entry["text"], result=say)
+                    self.screen.send("action", id=aid, status="done", mode=mode, text=entry["text"], result=say)
                 else:
                     say = out.get("say") or "Done."
-                    self.screen.send("action", status="done", mode=mode, text=entry["text"], result=say)
+                    self.screen.send("action", id=aid, status="done", mode=mode, text=entry["text"], result=say)
                 self.voice.say(say)
             elif mode == "ask":
                 say = brain.answer_question(entry["text"], self.transcript_lines(), self.reminder_lines())
-                self.screen.send("action", status="done", mode=mode, text=entry["text"], result=say)
+                self.screen.send("action", id=aid, status="done", mode=mode, text=entry["text"], result=say)
                 self.voice.say(say)
         except Exception as e:  # noqa: BLE001
             print("[act] failed:", e)
-            self.screen.send("action", status="refused", mode=mode, text=entry["text"], reason="Something went wrong")
+            self.screen.send("action", id=aid, status="refused", mode=mode, text=entry["text"], reason="Something went wrong")
 
     def transcript_lines(self):
         out = []

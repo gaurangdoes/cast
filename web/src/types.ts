@@ -11,7 +11,7 @@ export interface SegmentEvent extends Base {
   pose: Pose; rms_db: number | null; wearer: number; mode: Mode; is_wearer?: boolean; voice_sim?: number
 }
 export interface ActionEvent extends Base {
-  kind: 'action'; status: 'done' | 'refused' | 'working'; mode: Mode; text: string; result?: string; reason?: string
+  kind: 'action'; id?: string; status: 'done' | 'refused' | 'working'; mode: Mode; text: string; result?: string; reason?: string
 }
 export interface ClipEvent extends Base { kind: 'clip'; text: string; speaker: number | null }
 export type ReminderStatus = 'scheduled' | 'due' | 'cancelled'
