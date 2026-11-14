@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer } from 'react'
+import { useCallback, useEffect, useReducer, useRef } from 'react'
 import type { Banner, Card, CastEvent, ConnState, Mode, Pose, Reminder, SegmentEvent, TaskFields } from './types'
 
 const MAX_LINES = 300
@@ -121,9 +121,11 @@ function wsUrl(): string {
 
 export function useCast() {
   const [state, dispatch] = useReducer(reduce, initial)
+  const sendRef = useRef<(msg: object) => void>(() => {})
 
   useEffect(() => {
     let ws: WebSocket | null = null
+    sendRef.current = (msg: object) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)) }
     let retry: ReturnType<typeof setTimeout> | undefined
     let stopped = false
 
@@ -157,5 +159,6 @@ export function useCast() {
   }, [])
 
   const dismissBanner = useCallback((key: number) => dispatch({ type: 'dismiss', key }), [])
-  return { state, dismissBanner }
+  const rename = useCallback((speaker: number, name: string) => sendRef.current({ cmd: 'rename', speaker, name }), [])
+  return { state, dismissBanner, rename }
 }

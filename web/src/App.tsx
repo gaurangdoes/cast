@@ -62,7 +62,7 @@ function Icon({ name }: { name: string }) {
 /* ---------- app ---------- */
 
 export default function App() {
-  const { state, dismissBanner } = useCast()
+  const { state, dismissBanner, rename } = useCast()
   const [details, toggleDetails] = useStoredFlag('cast.details')
   const raised = state.pose === 'mouth' || state.pose === 'ear' || state.mode === 'command' || state.mode === 'ask'
   return (
@@ -97,7 +97,7 @@ export default function App() {
             raised={raised} micOn={state.micOn} pose={state.pose} mode={state.mode} angle={state.angle}
             poseSeen={state.poseSeen} levelPct={state.levelPct} wearer={state.wearer} ignored={state.ignored} details={details}
           />
-          <TranscriptPanel lines={state.lines} partial={state.partial} names={state.names} details={details} micOn={state.micOn} />
+          <TranscriptPanel lines={state.lines} partial={state.partial} names={state.names} details={details} micOn={state.micOn} onRename={rename} />
           <section className="side">
             <TasksPanel reminders={state.reminders} />
             <ActivityPanel cards={state.cards} names={state.names} />
@@ -177,8 +177,29 @@ function StatusPanel(p: {
 
 /* ---------- centre: transcript ---------- */
 
-function TranscriptPanel({ lines, partial, names, details, micOn }: {
+function SpeakerName({ label, speaker, editable, onRename }: {
+  label: string; speaker: number; editable: boolean; onRename: (speaker: number, name: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(label)
+  if (!editable) return <span className="who">{label}</span>
+  if (!editing) {
+    return (
+      <button type="button" className="who who-edit" title="Click to rename this person"
+        onClick={() => { setValue(label); setEditing(true) }}>{label}</button>
+    )
+  }
+  const save = () => { const v = value.trim(); if (v && v !== label) onRename(speaker, v); setEditing(false) }
+  return (
+    <input className="who-input" autoFocus value={value} maxLength={30} aria-label="Name for this person"
+      onChange={(e) => setValue(e.target.value)} onBlur={save}
+      onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false) }} />
+  )
+}
+
+function TranscriptPanel({ lines, partial, names, details, micOn, onRename }: {
   lines: Line[]; partial: string; names: Record<string, string>; details: boolean; micOn: boolean
+  onRename: (speaker: number, name: string) => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const lastKey = lines.length ? lines[lines.length - 1].key : 0
@@ -213,7 +234,8 @@ function TranscriptPanel({ lines, partial, names, details, micOn }: {
               <div className="line-body">
                 {!cont && (
                   <div className="line-head">
-                    <span className="who">{who.label}</span>
+                    <SpeakerName label={who.label} speaker={m.speaker} onRename={onRename}
+                      editable={!m.is_wearer && m.speaker != null && m.speaker >= 0} />
                     {toCast && <span className="to-cast-label">to Cast</span>}
                   </div>
                 )}

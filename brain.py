@@ -58,6 +58,9 @@ Return JSON with exactly these keys:
   they are telling you who someone is (e.g. "that was Hardik", "the person I'm talking to is Maya"),
   otherwise "other".
 - "name": for "label_speaker", the person's first name; otherwise empty.
+- "who": for "label_speaker", which existing speaker they mean if they say it ("Person 2 was Hardik",
+  "speaker two is Maya", "rename Ardek to Hardik" -> "Person 2", "Person 2", "Ardek"); empty when
+  they mean whoever just spoke ("that was Hardik").
 - "cancel": for "cancel_reminder" only: the list of tasks to cancel, copied exactly from the
   current tasks above. "both", "all", "every" or "my reminders" means all of them. If they
   name one ("the parking one"), just that one. If unclear, the most recently created (listed last).

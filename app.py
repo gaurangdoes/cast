@@ -75,6 +75,7 @@ class Screen:
         self.clients = set()
         self.backlog = deque(maxlen=200)
         self.snapshot = lambda: []      # extra messages for a newly opened page
+        self.on_message = None          # called with each JSON message a page sends
 
     def send(self, kind, **data):
         msg = json.dumps({"kind": kind, "t": time.time(), **data})
@@ -101,8 +102,13 @@ class Screen:
         for msg in list(self.backlog) + list(self.snapshot()):
             await ws.send(msg)
         try:
-            async for _ in ws:
-                pass
+            async for raw in ws:                    # the screen can send a few requests back
+                try:
+                    msg = json.loads(raw)
+                    if isinstance(msg, dict) and self.on_message:
+                        self.on_message(msg)
+                except Exception as e:  # noqa: BLE001
+                    print("[screen] bad message:", e)
         finally:
             self.clients.discard(ws)
 
@@ -167,6 +173,7 @@ class Cast:
         self.last_partial = 0.0
         self.cmd_lock = threading.Lock()
         threading.Thread(target=self._command_loop, daemon=True).start()
+        screen.on_message = self.on_screen_message
         screen.snapshot = lambda: [self.reminders_msg(), self.names_msg(), json.dumps({"kind": "mic", "t": time.time(), "on": not self.paused})]
 
     # ---- band events (run on the band's handler thread; keep short)
@@ -421,6 +428,29 @@ class Cast:
         self.screen.send("names", names={str(k): v for k, v in self.voices.names.items()})
         self.card(uuid.uuid4().hex[:8], "done", "command", "Learned a voice", result="Speaker %s is %s (%s)" % (vid, name, why))
 
+    def on_screen_message(self, msg):
+        """Typed on the screen: click a speaker's name and rename them."""
+        if msg.get("cmd") == "rename":
+            try:
+                vid = int(msg.get("speaker"))
+            except (TypeError, ValueError):
+                return
+            name = " ".join(str(msg.get("name") or "").split())[:30]
+            if vid >= 0 and vid != self.voices.wearer_id and name:
+                self.pool.submit(self.set_name, vid, name, "you typed it")
+
+    def find_voice(self, label):
+        """'Person 2', 'speaker two', 'Ardek' -> that voice's id, or None."""
+        want = " ".join(str(label or "").lower().split())
+        if not want:
+            return None
+        digits = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6"}
+        want = " ".join(digits.get(w, w) for w in want.replace("speaker", "person").split())
+        for vid, name in self.voices.names.items():
+            if name.lower() == want:
+                return vid
+        return None
+
     def learn_names(self, entry):
         try:
             addressed, self_name = brain.find_names(entry["text"])
@@ -504,6 +534,11 @@ class Cast:
                     name = (out.get("name") or "").strip().title()
                     if self.voices.wearer_id is None:
                         say = "I don't know your voice yet. Talk into the band first."
+                    elif name and self.find_voice(out.get("who")) is not None:
+                        vid = self.find_voice(out.get("who"))       # "Person 2 was Hardik"
+                        old = self.voices.names.get(vid)
+                        self.set_name(vid, name, "you told me")
+                        say = "Got it, %s is %s." % (old, name)
                     elif others and name:
                         self.set_name(others[-1]["speaker"], name, "you told me")
                         say = "Got it, that's %s." % name
