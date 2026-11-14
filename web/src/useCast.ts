@@ -81,6 +81,7 @@ function applyEvent(s: CastState, m: CastEvent): CastState {
     case 'partial':
       return { ...s, partial: m.text }
     case 'segment': {
+      if (m.id && s.lines.some((l) => l.id === m.id)) return s   // replayed after a reconnect
       const lines = [...s.lines, { ...m, key: nextKey() }].slice(-MAX_LINES)
       return { ...s, lines, partial: '', wearer: m.wearer }
     }

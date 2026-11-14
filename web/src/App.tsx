@@ -184,17 +184,20 @@ function SpeakerName({ label, speaker, segId, editable, known, onRename, onAssig
   const [editing, setEditing] = useState(false)
   const unknown = speaker == null || speaker < 0
   const [value, setValue] = useState(unknown ? '' : label)
+  const closed = useRef(false)
   if (!editable || (unknown && !segId)) return <span className="who">{label}</span>
   if (!editing) {
     return (
       <button type="button" className={`who who-edit${unknown ? ' who-ask' : ''}`}
         title={unknown ? 'Click to say who this was' : 'Click to rename this person'}
-        onClick={() => { setValue(unknown ? '' : label); setEditing(true) }}>
+        onClick={() => { closed.current = false; setValue(unknown ? '' : label); setEditing(true) }}>
         {label}{unknown && <span className="who-hint"> · who was this?</span>}
       </button>
     )
   }
   const save = () => {
+    if (closed.current) return                 // Enter then blur, or Escape then blur: act once
+    closed.current = true
     const v = value.trim()
     if (v && unknown && segId) onAssign(segId, v)
     else if (v && v !== label) onRename(speaker, v)
@@ -206,7 +209,7 @@ function SpeakerName({ label, speaker, segId, editable, known, onRename, onAssig
       <input className="who-input" autoFocus value={value} maxLength={30} list={unknown ? listId : undefined}
         placeholder={unknown ? 'me, or a name' : undefined} aria-label={unknown ? 'Who said this' : 'Name for this person'}
         onChange={(e) => setValue(e.target.value)} onBlur={save}
-        onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false) }} />
+        onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { closed.current = true; setEditing(false) } }} />
       {unknown && <datalist id={listId}>{['me', ...known].map((k) => <option key={k} value={k} />)}</datalist>}
     </>
   )

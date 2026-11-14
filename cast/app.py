@@ -48,6 +48,8 @@ WEARER_MIN = 0.6
 REFUSE_BELOW = 0.35     # only refuse when fairly sure it's someone else
 COMMAND_SETTLE_S = 1.8  # wait this long after the last raised-wrist words before acting
 CLIP_SECONDS = 30
+NEW_PERSON_DB = 22      # a new voice must be quieter than this at the band (the wearer resting reads 21)
+COMMAND_MAX_S = 8.0     # a command stops collecting this long after its first words
 FAINT_DB = 24           # quieter than this and not a known voice: background chatter, dropped
 SOFT_DB = 18            # the wearer's recognised voice at this level: a command if it is actionable
 NEAR_DB = 21            # wrist raised and the wearer's voice: softer speech still counts
@@ -121,11 +123,11 @@ class Voice:
 
     def __init__(self):
         self.busy_until = 0.0
+        self.spoke_from = float("inf")       # when the reply now (or last) playing started
         self.q = queue.Queue()
         threading.Thread(target=self._run, daemon=True).start()
 
     def say(self, text):
-        self.busy_until = max(self.busy_until, time.time() + 2.5 + len(text) * 0.07)   # until we know better
         self.q.put(text)
 
     def _run(self):
@@ -139,9 +141,11 @@ class Voice:
             try:
                 if wav:
                     path, seconds = wav
+                    self.spoke_from = time.time() - 0.2
                     self.busy_until = time.time() + seconds + 0.6
                     subprocess.run(["afplay", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 else:
+                    self.spoke_from = time.time() - 0.2
                     self.busy_until = time.time() + 0.5 + len(text) * 0.07
                     subprocess.run(["say", "-r", "205", text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception as e:  # noqa: BLE001
@@ -173,7 +177,8 @@ class Voice:
         return path, seconds
 
     def speaking(self, t_start, t_end):
-        return t_start <= self.busy_until
+        """Did this stretch of heard speech overlap Cast's own voice?"""
+        return t_end >= self.spoke_from and t_start <= self.busy_until
 
 
 class Cast:
@@ -187,7 +192,7 @@ class Cast:
         self.gest = gestures.LiveDetector(min_prob=0.65, refractory_s=2.5) if use else None
         self.fast = self.gest is not None or isinstance(self.poses, LearnedPoses)
         self.paused, self.pause_started = False, 0.0
-        self.unacked = None                   # (reminder, threading.Event) waiting for a thumbs up
+        self.unacked = []                     # (reminder, threading.Event) pairs waiting for a tap
         self.loud = Loudness(cal)
         self.segments = deque(maxlen=500)
         self.audio_t0 = None
@@ -293,11 +298,16 @@ class Cast:
     def on_segment(self, words):
         """A finished stretch of speech from Deepgram. Nemotron splits it into turns (who spoke
         when, even mid-sentence); each turn's voiceprint gives it a stable speaker id."""
-        t0 = self.audio_t0 or time.time()
-        if self.voice.speaking(t0 + words[0]["start"], t0 + words[-1]["end"]):
-            return                                   # Cast's own spoken reply
-        for run in self.split_by_speaker(words):
-            self.handle_run(run)
+        try:
+            t0 = self.audio_t0 or time.time()
+            if self.voice.speaking(t0 + words[0]["start"], t0 + words[-1]["end"]):
+                return                               # Cast's own spoken reply
+            for run in self.split_by_speaker(words):
+                self.handle_run(run)
+        except Exception:  # noqa: BLE001 - this runs on Deepgram's reader thread: an error here must be seen, and must not stop it
+            import traceback
+            print("[segment] failed:")
+            traceback.print_exc()
 
     def split_by_speaker(self, words):
         w0, w1 = words[0]["start"], words[-1]["end"]
@@ -336,8 +346,13 @@ class Cast:
             # change of speaker) is judged on everything they have said in this turn: longer
             # audio is what makes a voiceprint reliable (81% right at 1 s, 95% at 3 s).
             t = self.turn
-            continuing = (t is not None and r is runs[0] and start - t["end"] < 0.7)
-            changed = vid is not None and vid >= 0 and t is not None and vid != t["vid"] and sim >= 0.30
+            gap = start - t["end"] if t is not None else 9.0
+            changed = vid is not None and vid >= 0 and t is not None and vid != t["vid"]
+            if vid is None:
+                # under a second: only a mid-sentence fragment (no real gap) is the same person
+                continuing = t is not None and r is runs[0] and gap < 0.3
+            else:
+                continuing = t is not None and r is runs[0] and gap < 0.7
             if continuing and not changed:
                 jv, js = self.voices.identify(self.audio.slice(max(t["start"], end - 8.0), end + 0.05))
                 if jv is not None and jv >= 0:
@@ -351,11 +366,12 @@ class Cast:
                 self.turn = {"start": start, "end": end, "vid": vid if vid is not None else UNKNOWN}
             if vid is None:
                 vid = UNKNOWN
-            if vid == UNKNOWN and end - self.turn["start"] >= 5.0:
+            if vid == UNKNOWN and end - self.turn["start"] >= 5.0 and not self.turn.get("tried"):
+                self.turn["tried"] = True
                 # five seconds of someone nobody recognises: a new person joins the conversation
                 t0 = self.audio_t0 or time.time()
                 level = self.loud.level_during(t0 + self.turn["start"], t0 + end)
-                if level is None or level - getattr(self, "db_shift", 0) > RAISED_DB + 3:   # not the wearer up close
+                if level is not None and level - getattr(self, "db_shift", 0) > NEW_PERSON_DB:   # quieter than the wearer ever is
                     nid = self.voices.discover(self.audio.slice(max(self.turn["start"], end - 8.0), end + 0.05))
                     if nid is not None:
                         vid = self.turn["vid"] = nid
@@ -385,23 +401,26 @@ class Cast:
         loud = rms is not None and rms <= RAISED_DB                 # anyone speaking right into the band
         if vid < 0 and loud and self.voices.wearer_id is not None:
             vid = self.voices.wearer_id       # undecided voice, but this loud at the band is the wearer
-        mine = vid == self.voices.wearer_id or vid < 0           # the wearer, or undecided
+        mine = vid == self.voices.wearer_id                         # recognised as the wearer
         near = rms is not None and rms <= NEAR_DB and pose == "mouth" and mine   # softer, wrist raised
         with self.cmd_lock:
-            ongoing = self.pending_cmd is not None and mine         # still finishing a slow command
+            # still finishing a slow command: the wearer, or an undecided voice that is close to the band
+            ongoing = self.pending_cmd is not None and (
+                mine or (vid < 0 and rms is not None and rms <= NEAR_DB))
         # the wearer's own voice, fairly loud, but the pose is not clearly raised: treat it as a
         # command only if it turns out to be something Cast can do (decided after Gemini reads it)
         soft = (not loud and not near and not ongoing and vid == self.voices.wearer_id
                 and rms is not None and rms <= SOFT_DB)
         if (rms is not None and rms <= RAISED_DB - 2 and vid == self.voices.wearer_id and end - start >= 1.0
-                and hasattr(self.poses, "adapt")):
+                and not isinstance(self.poses, LearnedPoses)):
             # the wearer, this loud: the band is at the mouth for certain. Let the "raised" pose
             # follow where the wrist really was, so a shifted band corrects itself.
             moved = self.poses.adapt("mouth", start, end)
             if moved is not None and moved > 8:
                 print("[pose] raised-wrist reference moved %.0f degrees toward how you hold it now" % moved)
-        if loud or near or ongoing or soft:
-            pose = "mouth"
+        to_cast = loud or near or ongoing or soft
+        if loud or near or ongoing:
+            pose = "mouth"                           # shown as "to Cast"; a soft one stays plain until it proves actionable
         elif pose == "mouth":
             pose = "rest_table"                      # wrist up, but not talking to the band
         score = self.wearer_score(vid, rms, pose)
@@ -430,10 +449,13 @@ class Cast:
             self.pool.submit(self.check_heard, entry)
         print("[voice %s%s sim %.2f | %-10s | wearer %.2f | %s] %s" % (
             vid, "*" if entry["is_wearer"] else "", sim, pose, score, mode, run["text"]))
-        if mode in ("command", "ask"):
+        if to_cast:
             with self.cmd_lock:                      # collect until the speaker pauses
                 if self.pending_cmd is None:
-                    self.pending_cmd = {"texts": [], "scores": [], "entry": entry, "other": [], "soft": soft}
+                    self.pending_cmd = {"texts": [], "scores": [], "entry": entry, "other": [], "soft": True,
+                                        "first": time.time()}
+                if loud or near:
+                    self.pending_cmd["soft"] = False  # said straight to the band: Cast may answer aloud
                 self.pending_cmd["texts"].append(entry["text"])
                 self.pending_cmd["scores"].append(score)
                 # a recognised voice that is not the wearer's
@@ -449,7 +471,8 @@ class Cast:
                 if p is None:
                     continue
                 now = time.time()
-                if now - p["last"] < COMMAND_SETTLE_S or now - self.last_partial < 0.8:
+                if (now - p["first"] < COMMAND_MAX_S
+                        and (now - p["last"] < COMMAND_SETTLE_S or now - self.last_partial < 0.8)):
                     continue                         # still talking
                 self.pending_cmd = None
             text = " ".join(p["texts"]).strip()
@@ -569,7 +592,7 @@ class Cast:
             try:
                 if not self.voices.enrolled:
                     self.voices.save(self.voices_path)
-                else:
+                elif getattr(self.band, "transport_kind", "") != "sim":   # a pretend band teaches nothing real
                     self.voices.save_learned(self.learned_path)
             except Exception as e:  # noqa: BLE001
                 print("[voices] save failed:", e)
@@ -602,7 +625,8 @@ class Cast:
     def _act(self, mode, entry, aid):
         try:
             if mode == "command":
-                out = brain.interpret_command(entry["text"], [r["task"] for r in self.scheduler.pending()])
+                by_age = sorted(self.scheduler.pending(), key=lambda r: r.get("created", 0))
+                out = brain.interpret_command(entry["text"], [r["task"] for r in by_age])
                 intent = out.get("intent")
                 if entry.get("soft") and intent not in ("task", "question", "label_speaker", "cancel_reminder"):
                     print("[command] soft, not actionable, ignored:", entry["text"])
@@ -641,7 +665,13 @@ class Cast:
                     self.screen.send("action", id=aid, status="done", mode=mode, text=entry["text"], result=say)
                 elif intent == "cancel_reminder":
                     chosen = out.get("cancel") if isinstance(out.get("cancel"), list) else []
-                    gone = self.scheduler.cancel("", [str(c) for c in chosen]) if chosen else self.scheduler.cancel("")
+                    chosen = [str(c) for c in chosen]
+                    if [c.strip().lower() for c in chosen] == ["all"]:
+                        gone = self.scheduler.cancel("all")
+                    else:
+                        gone = self.scheduler.cancel("", chosen) if chosen else []
+                        if not gone:                 # nothing matched exactly: the newest one
+                            gone = self.scheduler.cancel("")
                     if not gone:
                         say = "There's nothing to cancel."
                     elif len(gone) == 1:
@@ -689,15 +719,14 @@ class Cast:
         self.screen.send("reminders", items=self.scheduler.pending())
         r = dict(r, task=(r.get("action") or {}).get("text") or r["task"])   # what gets spoken
         acked = threading.Event()
-        self.unacked = (r, acked)
+        self.unacked.append((r, acked))
 
         def nag():                            # repeat until a thumbs up, three times at most
             for _ in range(3):
                 self.voice.say("Reminder: %s." % r["task"])
                 if acked.wait(12):
                     return
-            if self.unacked and self.unacked[0] is r:
-                self.unacked = None
+            self.unacked = [(x, e) for x, e in self.unacked if x is not r]
         threading.Thread(target=nag, daemon=True).start()
 
     def run_answer_task(self, r):
@@ -765,12 +794,13 @@ class Cast:
             self.acknowledge("Thumbs up")
 
     def acknowledge(self, how):
-        if not self.unacked:
+        waiting, self.unacked = self.unacked, []
+        if not waiting:
             return
-        r, acked = self.unacked
-        self.unacked = None
-        acked.set()
-        self.card(uuid.uuid4().hex[:8], "done", "command", how, result="Acknowledged: %s" % r["task"])
+        for _, acked in waiting:
+            acked.set()
+        self.card(uuid.uuid4().hex[:8], "done", "command", how,
+                  result="Acknowledged: %s" % ", ".join(r["task"] for r, _ in waiting))
         self.voice.say("Got it.")
 
     def toggle_pause(self):

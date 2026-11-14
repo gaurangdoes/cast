@@ -176,7 +176,8 @@ class Voices:
         10%), a never-heard voice 0.56 or less against anyone (highest 10%)."""
         if not self.enrolled or len(pcm16) / (SAMPLE_RATE * 2) < 5.0:
             return None
-        raw = [self._unit(v) for v in self.embed_all(pcm16)]
+        embs = self.embed_all(pcm16)
+        raw = [self._unit(v) for v in embs]
         best = max(float(np.mean([max(float(raw[m] @ ex[m]) for ex in exs) for m in range(len(raw))]))
                    for exs in self.plain.values())
         if best >= NEW_PERSON_BELOW:
@@ -184,7 +185,7 @@ class Voices:
         with self.lock:
             nid = max(self.enrolled) + 1
             self.plain[nid] = [raw]
-            self.enrolled[nid] = [[self._unit(v - mu) for v, mu in zip(self.embed_all(pcm16), self.mu)]]
+            self.enrolled[nid] = [[self._unit(v - mu) for v, mu in zip(embs, self.mu)]]
             self.names[nid] = "Person %d" % (nid + 1)
         return nid
 
@@ -198,8 +199,10 @@ class Voices:
             return None, 0.0
         e = [self._unit(v - mu) for v, mu in zip(self.embed_all(pcm16), self.mu)]
         # per person: for each model, the best match among that person's examples; then average the models
+        with self.lock:                                # a correction on the screen can add a person meanwhile
+            people = [(i, list(exs)) for i, exs in self.enrolled.items()]
         scores = sorted(((float(np.mean([max(float(e[m] @ ex[m]) for ex in exs) for m in range(len(e))])), i)
-                         for i, exs in self.enrolled.items()), reverse=True)
+                         for i, exs in people), reverse=True)
         margin = scores[0][0] - scores[1][0]
         need = 0.20 if seconds >= 1.5 else 0.26       # commit only on a clear lead
         if margin >= 0.30 and seconds >= 2.5 and len(self.enrolled[scores[0][1]]) < 14:

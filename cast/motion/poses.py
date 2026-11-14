@@ -95,6 +95,9 @@ class PoseTracker:
             return None
         new = _unit(mean)
         moved = _angle(self.refs[name], new)
+        others = [_angle(ref, new) for n, ref in self.refs.items() if n != name]
+        if moved > 25 or (others and min(others) < moved):
+            return None                            # too far off, or closer to another pose: not this pose
         self.refs[name] = _unit([(1 - weight) * a + weight * b for a, b in zip(self.refs[name], new)])
         try:                                       # keep it for the next start
             cal = json.loads(CALIBRATION.read_text())
