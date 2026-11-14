@@ -19,6 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "vexo-open-kit" / "python"))
+import numpy as np  # noqa: E402
 import websockets  # noqa: E402
 
 import calibrate  # noqa: E402  (pose list, talk tests, summarize)
@@ -35,9 +36,14 @@ STEPS = (
         "instruction": "%s. %s." % (dict(calibrate.POSES)[p],
                                     "YOU talk normally" if w == "you" else "Stay quiet; a TEAMMATE talks from about 1 m away")}
        for p, w in calibrate.TALK_TESTS]
-    + [{"id": "cover:open", "group": "Covering the band", "title": "Open", "instruction": "Arm resting. YOU talk normally."},
-       {"id": "cover:covered", "group": "Covering the band", "title": "Covered",
-        "instruction": "Cover the band with your other hand and keep talking."}]
+    + [{"id": "probe:rest", "group": "Fist test (fast motion)", "title": "Still hand",
+        "instruction": "Forearm on the table, hand open and relaxed. Don't move."},
+       {"id": "probe:fist", "group": "Fist test (fast motion)", "title": "Clench and release",
+        "instruction": "Forearm on the table. Clench your fist hard, release, about once a second."},
+       {"id": "probe:hold", "group": "Fist test (fast motion)", "title": "Fist closed",
+        "instruction": "Forearm on the table. Close your fist and keep it closed."},
+       {"id": "probe:move", "group": "Fist test (fast motion)", "title": "Normal movement",
+        "instruction": "Move your arm around and gesture like you're talking. Keep your hand open."}]
 )
 
 
@@ -45,10 +51,28 @@ def load_results():
     try:
         r = json.loads(OUT.read_text())
         if r.get("source") == "calib_server":
+            r.setdefault("probe", {})
             return r
     except (OSError, ValueError):
         pass
-    return {"source": "calib_server", "poses": {}, "talk": {}, "cover": {}}
+    return {"source": "calib_server", "poses": {}, "talk": {}, "cover": {}, "probe": {}}
+
+
+def probe_summary(samples):
+    """High-frequency vibration energy (what a tendon twitch would add) in 100 ms windows."""
+    if len(samples) < 200:
+        return {"samples": len(samples)}
+    a = np.array(samples, dtype=np.float64)
+    t, acc = a[:, 0], a[:, 1:4]
+    rate = (len(t) - 1) / max(1e-6, (t[-1] - t[0]) / 1000.0)
+    k = 15                                                     # ~18 ms moving average at 833/s
+    kernel = np.ones(k) / k
+    smooth = np.stack([np.convolve(acc[:, i], kernel, mode="same") for i in range(3)], axis=1)
+    hp = np.linalg.norm(acc - smooth, axis=1)[k:-k]
+    win = max(1, int(rate / 10))
+    energy = np.array([np.sqrt(np.mean(hp[i:i + win] ** 2)) for i in range(0, len(hp) - win, win)]) * 1000
+    return {"samples": len(samples), "rate": round(rate), "hp_median_mg": round(float(np.median(energy)), 2),
+            "hp_p95_mg": round(float(np.percentile(energy, 95)), 2), "hp_max_mg": round(float(energy.max()), 2)}
 
 
 class Calib:
@@ -88,6 +112,9 @@ class Calib:
         self.push_state()
 
     def on_motion(self, m):
+        if getattr(self, "fast", None) is not None and self.rec.on:
+            self.fast.append((m.t, m.ax, m.ay, m.az))
+            return
         self.rec.on_motion(m)
         v = (m.ax, m.ay, m.az)
         self.g = list(v) if self.g is None else [g + 0.15 * (x - g) for g, x in zip(self.g, v)]
@@ -110,14 +137,29 @@ class Calib:
             self.active = {"id": step_id, "phase": "countdown", "left": left}
             self.push_state()
             time.sleep(1)
+        fast = step_id.startswith("probe:")
+        if fast:
+            self.band.configure(motion=833, sensors="accel")
+            self.fast = []
         self.rec.start()
         t0 = time.time()
         while time.time() - t0 < RECORD_S:
             self.active = {"id": step_id, "phase": "recording", "left": round(RECORD_S - (time.time() - t0), 1)}
             self.push_state()
             time.sleep(0.25)
-        summary = calibrate.summarize(*self.rec.stop())
+        motion, mic = self.rec.stop()
         kind, key = step_id.split(":", 1)
+        if fast:
+            self.band.configure(motion=50, sensors="both")
+            summary = probe_summary(self.fast)
+            np.save(ROOT / "data" / ("probe_%s.npy" % key), np.array(self.fast, dtype=np.float64))
+            self.fast = None
+            self.results.setdefault("probe", {})[key] = summary
+            OUT.write_text(json.dumps(self.results, indent=2))
+            self.active = None
+            self.push_state()
+            return
+        summary = calibrate.summarize(motion, mic)
         self.results[{"pose": "poses", "talk": "talk", "cover": "cover"}[kind]][key] = summary
         self.results["recorded_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         self.results["band"] = getattr(self.band, "name", None)
@@ -150,7 +192,8 @@ class Calib:
                          "gap": (mate - you) if you is not None and mate is not None else None})
         o = self.results["cover"].get("open", {}).get("rms_db_median")
         c = self.results["cover"].get("covered", {}).get("rms_db_median")
-        return {"pairs": pairs[:6], "loudness": loud, "cover_drop": (c - o) if o is not None and c is not None else None}
+        return {"pairs": pairs[:6], "loudness": loud, "cover_drop": (c - o) if o is not None and c is not None else None,
+                "probe": self.results.get("probe", {})}
 
     def nearest_pose(self):
         if not self.g:
@@ -167,7 +210,7 @@ class Calib:
 
     def state_msg(self):
         done = {}
-        for kind, bucket in (("pose", "poses"), ("talk", "talk"), ("cover", "cover")):
+        for kind, bucket in (("pose", "poses"), ("talk", "talk"), ("cover", "cover"), ("probe", "probe")):
             for k, v in self.results[bucket].items():
                 done["%s:%s" % (kind, k)] = v
         return json.dumps({"kind": "cal_state", "band": "Vexo-HACK-%02d" % self.number, "status": self.status,

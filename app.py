@@ -145,9 +145,6 @@ class Cast:
     def on_motion(self, m):
         pose = self.poses.feed(m.ax, m.ay, m.az)
         now = time.time()
-        if pose == "glance" and self.last_pose_sent != "glance" and now - self.last_glance_status > 8:
-            self.last_glance_status = now
-            self.pool.submit(self.status)
         if pose != self.last_pose_sent or now - self.last_motion_push > 0.5:
             self.last_pose_sent, self.last_motion_push = pose, now
             self.screen.send("pose", pose=pose, mode=MODE_OF_POSE.get(pose, "ambient"),
@@ -225,6 +222,7 @@ class Cast:
                 vid, sim = self.voices.identify(self.audio.slice(start - 0.05, end + 0.05))
             if vid is None:
                 vid = self.last_voice if self.last_voice is not None else 0
+            vid = self.voices.resolve(vid)
             self.last_voice = vid
             out.append({"voice": vid, "sim": sim, "start": start, "end": end,
                         "text": " ".join(w["text"] for w in r["words"])})

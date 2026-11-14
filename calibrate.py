@@ -23,12 +23,11 @@ from vexo_open.sync import Band  # noqa: E402
 
 POSES = [
     ("mouth", "Raise the band to your mouth, as if talking into it"),
-    ("ear", "Raise the band to your ear, as if on a phone call"),
     ("rest_table", "Rest your forearm on the table"),
     ("side", "Let your arm hang at your side"),
     ("chest", "Hold the band against your chest, forearm across your body"),
     ("extended", "Hold your arm out straight in front of you, palm down"),
-    ("glance", "Look at the band like checking a watch"),
+    ("thumbs_up", "Forearm in front of you, thumbs up"),
 ]
 
 TALK_TESTS = [

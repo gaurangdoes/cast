@@ -23,9 +23,9 @@ SMOOTH = 0.15           # low-pass on acceleration (0..1, smaller = smoother)
 MODE_OF_POSE = {
     "mouth": "command",
     "ear": "command",   # dropped as its own gesture: raised wrist = talk to Cast
-    "chest": "note",
-    "extended": "for_them",
-    "glance": "status",
+    "chest": "ambient",
+    "extended": "ambient",
+    "glance": "ambient",     # dropped: only the raised wrist does anything
     "rest_table": "ambient",
     "side": "ambient",
 }

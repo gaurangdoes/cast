@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 
 type Step = { id: string; group: string; title: string; instruction: string }
-type Summary = { gravity?: number[]; rms_db_median?: number; samples?: number; accel_spread_g?: number }
+type Summary = { gravity?: number[]; rms_db_median?: number; samples?: number; accel_spread_g?: number; hp_median_mg?: number; hp_p95_mg?: number; hp_max_mg?: number; rate?: number }
 type Analysis = {
   pairs: { a: string; b: string; deg: number }[]
   loudness: { pose: string; you: number | null; teammate: number | null; gap: number | null }[]
   cover_drop: number | null
+  probe?: Record<string, Summary>
 }
 type CalState = {
   band: string; status: 'idle' | 'connecting' | 'connected' | 'error' | 'disconnected'; error: string | null
@@ -129,6 +130,7 @@ function describe(d: Summary) {
   const parts: string[] = []
   if (d.gravity) parts.push(`gravity ${d.gravity.map((x) => x.toFixed(2)).join(', ')}`)
   if (d.rms_db_median != null) parts.push(`${d.rms_db_median} dB`)
+  if (d.hp_p95_mg != null) parts.push(`vibration median ${d.hp_median_mg} · p95 ${d.hp_p95_mg} · max ${d.hp_max_mg} mg @ ${d.rate}/s`)
   if (d.accel_spread_g != null && d.accel_spread_g > 0.05) parts.push('moved a lot, consider redoing')
   return parts.join(' · ')
 }
@@ -191,10 +193,17 @@ function AnalysisView({ a }: { a: Analysis }) {
           <b>{l.gap == null ? '–' : `${l.gap > 0 ? '+' : ''}${l.gap} dB`}</b>
         </div>
       ))}
-      <div className="cal-sub">Covering the band</div>
-      <div className={`cal-row ${a.cover_drop == null ? '' : a.cover_drop >= 6 ? 'ok' : 'bad'}`}>
-        <span>level drop when covered</span><b>{a.cover_drop == null ? '–' : `${a.cover_drop} dB`}</b>
-      </div>
+      <div className="cal-sub">Fist test: vibration p95 (mg), fist should stand out from still and moving</div>
+      {['rest', 'fist', 'hold', 'move'].map((k) => {
+        const v = a.probe?.[k]
+        const rest = a.probe?.rest?.hp_p95_mg
+        const ratio = v?.hp_p95_mg != null && rest ? v.hp_p95_mg / rest : null
+        return (
+          <div key={k} className={`cal-row ${k === 'fist' && ratio != null ? (ratio >= 2 ? 'ok' : 'bad') : ''}`}>
+            <span>{k}</span><b>{v?.hp_p95_mg != null ? `${v.hp_p95_mg}${ratio && k !== 'rest' ? ` (${ratio.toFixed(1)}× still)` : ''}` : '–'}</b>
+          </div>
+        )
+      })}
     </div>
   )
 }
