@@ -362,7 +362,8 @@ class Cast:
             self.pending_name = None
         entry = {"speaker": vid, "text": run["text"], "start": start, "end": end,
                  "pose": pose, "rms_db": rms, "wearer": score, "mode": mode,
-                 "is_wearer": is_wearer, "voice_sim": round(sim, 2), "name": self.voices.names.get(vid)}
+                 "is_wearer": is_wearer, "voice_sim": round(sim, 2), "name": self.voices.names.get(vid),
+                 "id": uuid.uuid4().hex[:8], "a0": run["start"], "a1": run["end"]}
         if mode == "ambient" and NAME_HINT.search(run["text"]):
             self.pool.submit(self.learn_names, entry)
         self.segments.append(entry)
@@ -430,7 +431,9 @@ class Cast:
 
     def on_screen_message(self, msg):
         """Typed on the screen: click a speaker's name and rename them."""
-        if msg.get("cmd") == "rename":
+        if msg.get("cmd") == "assign":
+            self.pool.submit(self.assign, str(msg.get("seg")), msg.get("name"))
+        elif msg.get("cmd") == "rename":
             try:
                 vid = int(msg.get("speaker"))
             except (TypeError, ValueError):
@@ -438,6 +441,37 @@ class Cast:
             name = " ".join(str(msg.get("name") or "").split())[:30]
             if vid >= 0 and vid != self.voices.wearer_id and name:
                 self.pool.submit(self.set_name, vid, name, "you typed it")
+
+    def assign(self, seg_id, who):
+        """Typed on the screen for a line Cast could not place: "that was me" / "Hardik" / a new
+        name. The line is relabelled and its audio becomes an example of that voice, so Cast
+        recognises them next time."""
+        seg = next((s for s in list(self.segments) if s.get("id") == seg_id), None)
+        who = " ".join(str(who or "").split())[:30]
+        if seg is None or not who:
+            return
+        pcm = self.audio.slice(seg["a0"] - 0.05, seg["a1"] + 0.05)      # empty if older than 3 minutes
+        if who.lower() in ("me", "you", "i", "myself", "mine"):
+            vid = self.voices.wearer_id
+            if vid is not None:
+                self.voices.teach(pcm, vid=vid)
+        else:
+            vid = self.find_voice(who)
+            if vid is not None:
+                self.voices.teach(pcm, vid=vid)
+            else:
+                vid = self.voices.teach(pcm, vid=None, name=who)          # someone new
+                if vid is None:
+                    self.card(uuid.uuid4().hex[:8], "refused", "command", "Name a voice",
+                              reason="That line is too short to learn a new voice from. Try a longer one.")
+                    return
+                self.screen.send("names", names={str(k): v for k, v in self.voices.names.items()})
+        if vid is None:
+            return
+        seg["speaker"], seg["is_wearer"] = vid, vid == self.voices.wearer_id
+        seg["name"] = self.voices.names.get(vid)
+        self.screen.send("relabel", seg=seg_id, speaker=vid, is_wearer=seg["is_wearer"], name=seg["name"])
+        print("[voices] line %s assigned to %s" % (seg_id, "you" if seg["is_wearer"] else seg["name"]))
 
     def find_voice(self, label):
         """'Person 2', 'speaker two', 'Ardek' -> that voice's id, or None."""

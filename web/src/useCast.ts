@@ -62,6 +62,8 @@ function taskOf(m: TaskFields): Reminder {
 
 function applyEvent(s: CastState, m: CastEvent): CastState {
   switch (m.kind) {
+    case 'relabel':
+      return { ...s, lines: s.lines.map((l) => (l.id && l.id === m.seg ? { ...l, speaker: m.speaker, is_wearer: m.is_wearer, name: m.name } : l)) }
     case 'names':
       return { ...s, names: m.names }
     case 'mic':
@@ -160,5 +162,6 @@ export function useCast() {
 
   const dismissBanner = useCallback((key: number) => dispatch({ type: 'dismiss', key }), [])
   const rename = useCallback((speaker: number, name: string) => sendRef.current({ cmd: 'rename', speaker, name }), [])
-  return { state, dismissBanner, rename }
+  const assign = useCallback((seg: string, name: string) => sendRef.current({ cmd: 'assign', seg, name }), [])
+  return { state, dismissBanner, rename, assign }
 }

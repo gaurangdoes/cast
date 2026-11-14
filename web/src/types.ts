@@ -8,7 +8,7 @@ export interface LevelEvent extends Base { kind: 'level'; rms_db: number }
 export interface PartialEvent extends Base { kind: 'partial'; text: string }
 export interface SegmentEvent extends Base {
   kind: 'segment'; speaker: number; text: string; start: number; end: number
-  pose: Pose; rms_db: number | null; wearer: number; mode: Mode; is_wearer?: boolean; voice_sim?: number; name?: string | null
+  pose: Pose; rms_db: number | null; wearer: number; mode: Mode; is_wearer?: boolean; voice_sim?: number; name?: string | null; id?: string
 }
 export interface ActionEvent extends Base {
   kind: 'action'; id?: string; status: 'done' | 'refused' | 'working'; mode: Mode; text: string; result?: string; reason?: string
@@ -27,6 +27,7 @@ export interface RemindersEvent extends Base { kind: 'reminders'; items: TaskFie
 export type CastEvent =
   | PoseEvent | LevelEvent | PartialEvent | SegmentEvent | ActionEvent | ClipEvent | ReminderEvent | RemindersEvent
   | { kind: 'names'; t: number; names: Record<string, string> }
+  | { kind: 'relabel'; t: number; seg: string; speaker: number; is_wearer: boolean; name?: string | null }
   | { kind: 'ignored'; t: number; count: number }
   | { kind: 'mic'; t: number; on: boolean } | { kind: 'gesture'; t: number; label: string; prob: number }
 

@@ -115,6 +115,24 @@ class Voices:
         self.labels = labels
         return True
 
+    def teach(self, pcm16, vid=None, name=None):
+        """The user said who a stretch of speech was. Keep it as an example of that voice
+        (vid), or as a new person (name). Returns the voice id, or None if there is nothing
+        to learn from (no enrolment, or under a second of audio)."""
+        if not self.enrolled or len(pcm16) / (SAMPLE_RATE * 2) < 1.0:
+            return vid
+        embs = self.embed_all(pcm16)
+        centred = [self._unit(v - mu) for v, mu in zip(embs, self.mu)]
+        plain = [self._unit(v) for v in embs]
+        with self.lock:
+            if vid is None:
+                vid = max(self.enrolled) + 1
+                self.enrolled[vid], self.plain[vid] = [], []
+                self.names[vid] = name or "Person %d" % (vid + 1)
+            self.enrolled[vid].append(centred)
+            self.plain.setdefault(vid, []).append(plain)
+        return vid
+
     def discover(self, pcm16):
         """A long stretch (5 s+) from a voice that matches nobody enrolled becomes a new person.
         Measured on this band with 5 s clips: a known voice scores 0.61+ against itself (lowest

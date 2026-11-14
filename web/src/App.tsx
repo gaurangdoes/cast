@@ -62,7 +62,7 @@ function Icon({ name }: { name: string }) {
 /* ---------- app ---------- */
 
 export default function App() {
-  const { state, dismissBanner, rename } = useCast()
+  const { state, dismissBanner, rename, assign } = useCast()
   const [details, toggleDetails] = useStoredFlag('cast.details')
   const raised = state.pose === 'mouth' || state.pose === 'ear' || state.mode === 'command' || state.mode === 'ask'
   return (
@@ -97,7 +97,7 @@ export default function App() {
             raised={raised} micOn={state.micOn} pose={state.pose} mode={state.mode} angle={state.angle}
             poseSeen={state.poseSeen} levelPct={state.levelPct} wearer={state.wearer} ignored={state.ignored} details={details}
           />
-          <TranscriptPanel lines={state.lines} partial={state.partial} names={state.names} details={details} micOn={state.micOn} onRename={rename} />
+          <TranscriptPanel lines={state.lines} partial={state.partial} names={state.names} details={details} micOn={state.micOn} onRename={rename} onAssign={assign} />
           <section className="side">
             <TasksPanel reminders={state.reminders} />
             <ActivityPanel cards={state.cards} names={state.names} />
@@ -177,29 +177,45 @@ function StatusPanel(p: {
 
 /* ---------- centre: transcript ---------- */
 
-function SpeakerName({ label, speaker, editable, onRename }: {
-  label: string; speaker: number; editable: boolean; onRename: (speaker: number, name: string) => void
+function SpeakerName({ label, speaker, segId, editable, known, onRename, onAssign }: {
+  label: string; speaker: number; segId?: string; editable: boolean; known: string[]
+  onRename: (speaker: number, name: string) => void; onAssign: (seg: string, name: string) => void
 }) {
   const [editing, setEditing] = useState(false)
-  const [value, setValue] = useState(label)
-  if (!editable) return <span className="who">{label}</span>
+  const unknown = speaker == null || speaker < 0
+  const [value, setValue] = useState(unknown ? '' : label)
+  if (!editable || (unknown && !segId)) return <span className="who">{label}</span>
   if (!editing) {
     return (
-      <button type="button" className="who who-edit" title="Click to rename this person"
-        onClick={() => { setValue(label); setEditing(true) }}>{label}</button>
+      <button type="button" className={`who who-edit${unknown ? ' who-ask' : ''}`}
+        title={unknown ? 'Click to say who this was' : 'Click to rename this person'}
+        onClick={() => { setValue(unknown ? '' : label); setEditing(true) }}>
+        {label}{unknown && <span className="who-hint"> · who was this?</span>}
+      </button>
     )
   }
-  const save = () => { const v = value.trim(); if (v && v !== label) onRename(speaker, v); setEditing(false) }
+  const save = () => {
+    const v = value.trim()
+    if (v && unknown && segId) onAssign(segId, v)
+    else if (v && v !== label) onRename(speaker, v)
+    setEditing(false)
+  }
+  const listId = `known-${segId ?? speaker}`
   return (
-    <input className="who-input" autoFocus value={value} maxLength={30} aria-label="Name for this person"
-      onChange={(e) => setValue(e.target.value)} onBlur={save}
-      onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false) }} />
+    <>
+      <input className="who-input" autoFocus value={value} maxLength={30} list={unknown ? listId : undefined}
+        placeholder={unknown ? 'me, or a name' : undefined} aria-label={unknown ? 'Who said this' : 'Name for this person'}
+        onChange={(e) => setValue(e.target.value)} onBlur={save}
+        onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false) }} />
+      {unknown && <datalist id={listId}>{['me', ...known].map((k) => <option key={k} value={k} />)}</datalist>}
+    </>
   )
 }
 
-function TranscriptPanel({ lines, partial, names, details, micOn, onRename }: {
+function TranscriptPanel({ lines, partial, names, details, micOn, onRename, onAssign }: {
   lines: Line[]; partial: string; names: Record<string, string>; details: boolean; micOn: boolean
   onRename: (speaker: number, name: string) => void
+  onAssign: (seg: string, name: string) => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const lastKey = lines.length ? lines[lines.length - 1].key : 0
@@ -234,8 +250,8 @@ function TranscriptPanel({ lines, partial, names, details, micOn, onRename }: {
               <div className="line-body">
                 {!cont && (
                   <div className="line-head">
-                    <SpeakerName label={who.label} speaker={m.speaker} onRename={onRename}
-                      editable={!m.is_wearer && m.speaker != null && m.speaker >= 0} />
+                    <SpeakerName label={who.label} speaker={m.speaker} segId={m.id} onRename={onRename} onAssign={onAssign}
+                      known={Object.values(names)} editable={!m.is_wearer} />
                     {toCast && <span className="to-cast-label">to Cast</span>}
                   </div>
                 )}
