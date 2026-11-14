@@ -46,6 +46,8 @@ def _now():
 COMMAND_PROMPT = """You are Cast, a voice assistant in a wristband. The wearer raised the band to
 their mouth and gave a command. Current local time: {now}.
 
+Current reminders (oldest first): {reminders}
+
 Command: "{text}"
 
 Return JSON with exactly these keys:
@@ -55,6 +57,9 @@ Return JSON with exactly these keys:
   they are telling you who someone is (e.g. "that was Hardik", "the person I'm talking to is Maya"),
   otherwise "other".
 - "name": for "label_speaker", the person's first name; otherwise empty.
+- "cancel": for "cancel_reminder" only: the list of reminders to cancel, copied exactly from the
+  current reminders below. "both", "all", "every" or "my reminders" means all of them. If they
+  name one ("the parking one"), just that one. If unclear, the most recently created (listed last).
 - "task": short label for what to remind them about (empty if not a reminder), e.g. "Move the car".
 - "remind_at": ISO 8601 local time with offset for when to remind them (empty if not a reminder).
   Work out times from what they said, e.g. "I parked, it ends in 2 hours, remind me 5 minutes
@@ -83,9 +88,10 @@ If the answer is not in what was heard, say so briefly.
 """
 
 
-def interpret_command(text):
+def interpret_command(text, reminders=()):
     now = _now()
-    out = ask_json(COMMAND_PROMPT.format(now=now.isoformat(timespec="seconds"), text=text), fast=True)
+    out = ask_json(COMMAND_PROMPT.format(now=now.isoformat(timespec="seconds"), text=text,
+                                         reminders=json.dumps(list(reminders)) if reminders else "none"), fast=True)
     if not out:
         out = regex_reminder(text, now) or {"intent": "other", "say": "Sorry, I couldn't do that."}
     if out.get("intent") == "reminder":

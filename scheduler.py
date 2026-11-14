@@ -48,6 +48,24 @@ class Scheduler:
             self._save()
             return r
 
+    def cancel(self, which, pending_tasks_chosen=None):
+        """which: "all", or the tasks to cancel (exact task strings), or empty for the latest."""
+        with self.lock:
+            pending = [r for r in self.items if r["status"] == "scheduled"]
+            if which == "all":
+                gone = pending
+            elif pending_tasks_chosen:
+                want = {t.strip().lower() for t in pending_tasks_chosen}
+                gone = [r for r in pending if r["task"].strip().lower() in want]
+            else:
+                gone = [max(pending, key=lambda x: x["created"])] if pending else []
+            for r in gone:
+                r["status"] = "cancelled"
+                self.items.remove(r)
+            if gone:
+                self._save()
+            return [dict(r) for r in gone]
+
     def pending(self):
         with self.lock:
             return sorted((dict(r) for r in self.items if r["status"] == "scheduled"), key=lambda r: r["remind_at"])

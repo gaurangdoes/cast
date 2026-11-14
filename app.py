@@ -443,7 +443,7 @@ class Cast:
     def _act(self, mode, entry, aid):
         try:
             if mode == "command":
-                out = brain.interpret_command(entry["text"])
+                out = brain.interpret_command(entry["text"], [r["task"] for r in self.scheduler.pending()])
                 intent = out.get("intent")
                 if entry.get("soft") and intent not in ("reminder", "question", "label_speaker", "cancel_reminder"):
                     print("[command] soft, not actionable, ignored:", entry["text"])
@@ -472,9 +472,15 @@ class Cast:
                         say = "I haven't heard anyone else yet."
                     self.screen.send("action", id=aid, status="done", mode=mode, text=entry["text"], result=say)
                 elif intent == "cancel_reminder":
-                    r = self.scheduler.cancel_latest()
-                    say = "Cancelled %s." % r["task"] if r else "There's nothing to cancel."
-                    if r:
+                    chosen = out.get("cancel") if isinstance(out.get("cancel"), list) else []
+                    gone = self.scheduler.cancel("", [str(c) for c in chosen]) if chosen else self.scheduler.cancel("")
+                    if not gone:
+                        say = "There's nothing to cancel."
+                    elif len(gone) == 1:
+                        say = "Cancelled %s." % gone[0]["task"]
+                    else:
+                        say = "Cancelled %d reminders: %s." % (len(gone), ", ".join(r["task"] for r in gone))
+                    for r in gone:
                         self.screen.send("reminder", **r)
                     self.screen.send("reminders", items=self.scheduler.pending())
                     self.screen.send("action", id=aid, status="done", mode=mode, text=entry["text"], result=say)
