@@ -38,6 +38,7 @@ import ears  # noqa: E402
 import nemotron  # noqa: E402
 from concurrent.futures import ThreadPoolExecutor  # noqa: E402
 from scheduler import Scheduler, spoken_time  # noqa: E402
+from voices import UNKNOWN  # noqa: E402
 import gestures  # noqa: E402
 from poses import MODE_OF_POSE, LearnedPoses, Loudness, PoseTracker, load_calibration  # noqa: E402
 from vexo_open.sync import Band  # noqa: E402
@@ -48,7 +49,7 @@ WEARER_MIN = 0.6
 REFUSE_BELOW = 0.35     # only refuse when fairly sure it's someone else
 COMMAND_SETTLE_S = 1.2  # wait this long after the last raised-wrist words before acting
 CLIP_SECONDS = 30
-RAISED_DB = 14          # at or below this loudness the wrist is at the mouth
+RAISED_DB = 16          # at or below this loudness someone is talking into the band
 NAME_HINT = re.compile(r"\b(hey|hi|hello|yo|thanks|thank you|i'm|i am|this is|my name)\b", re.I)
 CONTEXT_S = 6.0          # seconds of earlier audio given to Nemotron with each sentence
 
@@ -224,13 +225,6 @@ class Cast:
             except Exception as e:  # noqa: BLE001
                 print("[nemotron] failed:", e)
         # local Nemotron speaker -> global voice id, from all of that speaker's audio in the window
-        local_to_voice = {}
-        for spk in {t[0] for t in turns}:
-            audio = b"".join(self.audio.slice(a, b) for s2, a, b in turns if s2 == spk)
-            vid, sim = self.voices.identify(audio)
-            if vid is not None:
-                local_to_voice[spk] = (vid, sim)
-
         def speaker_of(w):
             mid = (w["start"] + w["end"]) / 2
             best, gap = None, 1e9
@@ -250,11 +244,11 @@ class Cast:
         out = []
         for r in runs:
             start, end = r["words"][0]["start"], r["words"][-1]["end"]
-            vid, sim = local_to_voice.get(r["local"], (None, 0.0))
-            if vid is None:                                  # no turn found: fingerprint the words themselves
-                vid, sim = self.voices.identify(self.audio.slice(start - 0.05, end + 0.05))
-            if vid is None:
-                vid = self.last_voice if self.last_voice is not None else 0
+            # Nemotron only decides where the speaker changes; who it is comes from this
+            # stretch's own audio, never from the context before it
+            vid, sim = self.voices.identify(self.audio.slice(start - 0.05, end + 0.05))
+            if vid is None:                                  # under 0.7 s: can't tell
+                vid = UNKNOWN
             vid = self.voices.resolve(vid)
             self.last_voice = vid
             out.append({"voice": vid, "sim": sim, "start": start, "end": end,
@@ -268,11 +262,13 @@ class Cast:
             return                                   # that was Cast's own voice
         pose = self.poses.pose_during(start, end)
         rms = self.loud.level_during(start, end)
-        if rms is not None and rms <= RAISED_DB and pose != "mouth":
-            # this loud at the band only happens with the wrist at the mouth (calibrated: 12 dB
-            # there, 21 dB resting, 27 dB for someone else): trust it over a missed pose
-            print("[pose] %s -> mouth by loudness (%s dB)" % (pose, rms))
+        # Talking into the band is what makes a command, and loudness at the band is the proof
+        # (calibrated: 12 dB at the mouth, 21 dB resting, 27 dB for someone else).
+        raised = rms is not None and rms <= RAISED_DB
+        if raised:
             pose = "mouth"
+        elif pose == "mouth":
+            pose = "rest_table"                      # pose says raised but nobody spoke into it
         vid, sim = run["voice"], run["sim"]
         score = self.wearer_score(vid, rms, pose)
         mode = MODE_OF_POSE.get(pose, "ambient")
@@ -295,9 +291,12 @@ class Cast:
         if mode in ("command", "ask"):
             with self.cmd_lock:                      # collect until the speaker pauses
                 if self.pending_cmd is None:
-                    self.pending_cmd = {"texts": [], "scores": [], "entry": entry}
+                    self.pending_cmd = {"texts": [], "scores": [], "entry": entry, "other": []}
                 self.pending_cmd["texts"].append(entry["text"])
                 self.pending_cmd["scores"].append(score)
+                # a recognised voice that is not the wearer's
+                self.pending_cmd["other"].append(
+                    self.voices.wearer_id is not None and vid >= 0 and vid != self.voices.wearer_id)
                 self.pending_cmd["last"] = time.time()
 
     def _command_loop(self):
@@ -317,7 +316,7 @@ class Cast:
                 print("[command] ignored fragment:", text)
                 continue
             entry = dict(p["entry"], text=text, wearer=score)
-            if score < REFUSE_BELOW:
+            if p["other"] and all(p["other"]):       # every part was someone else's voice
                 self.card(uuid.uuid4().hex[:8], "refused", "command", text,
                           reason="Not the wearer's voice (score %.2f)" % score)
                 self.voice.say("Only the wearer can do that.")
