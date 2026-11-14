@@ -37,7 +37,7 @@ import brain  # noqa: E402
 import ears  # noqa: E402
 import nemotron  # noqa: E402
 from concurrent.futures import ThreadPoolExecutor  # noqa: E402
-from scheduler import Scheduler, spoken_time  # noqa: E402
+from scheduler import Scheduler, keyword_hit, spoken_time  # noqa: E402
 from voices import UNKNOWN  # noqa: E402
 import gestures  # noqa: E402
 from poses import MODE_OF_POSE, LearnedPoses, Loudness, PoseTracker, load_calibration  # noqa: E402
@@ -142,6 +142,8 @@ class Cast:
         self.pool = ThreadPoolExecutor(max_workers=3)
         self.scheduler = Scheduler(self.on_reminder_due)
         self.last_glance_status = 0.0
+        self.activity_ok = False              # set once the band's activity stream is on
+        self.moving, self.move_last, self.move_run = False, False, 0
         print("Loading the voice model...")
         from vexo_open.audio import PcmDecoder
         from voices import AudioBuffer, Voices
@@ -358,6 +360,8 @@ class Cast:
             self.pool.submit(self.learn_names, entry)
         self.segments.append(entry)
         self.screen.send("segment", **entry)
+        if mode == "ambient" and self.scheduler.waiting("heard"):
+            self.pool.submit(self.check_heard, entry)
         print("[voice %s%s sim %.2f | %-10s | wearer %.2f | %s] %s" % (
             vid, "*" if entry["is_wearer"] else "", sim, pose, score, mode, run["text"]))
         if mode in ("command", "ask"):
@@ -476,16 +480,20 @@ class Cast:
             if mode == "command":
                 out = brain.interpret_command(entry["text"], [r["task"] for r in self.scheduler.pending()])
                 intent = out.get("intent")
-                if entry.get("soft") and intent not in ("reminder", "question", "label_speaker", "cancel_reminder"):
+                if entry.get("soft") and intent not in ("task", "question", "label_speaker", "cancel_reminder"):
                     print("[command] soft, not actionable, ignored:", entry["text"])
                     return
-                if intent == "reminder":
-                    r = self.scheduler.add(out.get("task"), out["remind_at_epoch"], out.get("say"))
-                    say = out.get("say") or "Okay, I'll remind you %s." % spoken_time(r["remind_at"])
+                if intent == "task" and out["trigger"]["type"] == "activity" and not self.activity_ok:
+                    say = "I can't tell when you move on this band yet."
+                    self.screen.send("action", id=aid, status="done", mode=mode, text=entry["text"], result=say)
+                elif intent == "task":
+                    r = self.scheduler.add_task(out.get("task"), out["trigger"], out["action"], out.get("say"))
+                    when = spoken_time(r["remind_at"]) if r["kind_of"] == "time" else r["trigger_label"]
+                    say = out.get("say") or "Okay, %s." % r["trigger_label"]
                     self.screen.send("reminder", **r)
                     self.screen.send("reminders", items=self.scheduler.pending())
                     self.screen.send("action", id=aid, status="done", mode=mode, text=entry["text"],
-                                     result="Reminder: %s %s" % (r["task"], spoken_time(r["remind_at"])))
+                                     result="Task: %s, %s" % (r["task"], when))
                 elif intent == "question":
                     say = brain.answer_question(entry["text"], self.transcript_lines(), self.reminder_lines())
                     self.screen.send("action", id=aid, status="done", mode="ask", text=entry["text"], result=say)
@@ -536,16 +544,21 @@ class Cast:
         return out
 
     def reminder_lines(self):
-        return ["%s at %s" % (r["task"], time.strftime("%-I:%M %p", time.localtime(r["remind_at"])))
+        return ["%s, %s" % (r["task"], r.get("trigger_label") or spoken_time(r["remind_at"]))
                 for r in self.scheduler.pending()]
 
     def reminders_msg(self):
         return json.dumps({"kind": "reminders", "t": time.time(), "items": self.scheduler.pending()})
 
     def on_reminder_due(self, r):
-        print("[reminder] due:", r["task"])
+        """A task's moment came (called from the scheduler's thread, or a worker for event triggers)."""
+        print("[task] due: %s (%s)" % (r["task"], r.get("trigger_label")))
+        if (r.get("action") or {}).get("type") == "answer":
+            self.pool.submit(self.run_answer_task, r)     # needs Gemini: keep the scheduler free
+            return
         self.screen.send("reminder", **r)
         self.screen.send("reminders", items=self.scheduler.pending())
+        r = dict(r, task=(r.get("action") or {}).get("text") or r["task"])   # what gets spoken
         acked = threading.Event()
         self.unacked = (r, acked)
 
@@ -557,6 +570,54 @@ class Cast:
             if self.unacked and self.unacked[0] is r:
                 self.unacked = None
         threading.Thread(target=nag, daemon=True).start()
+
+    def run_answer_task(self, r):
+        """A task whose action is worked out when it fires: answer from the conversation so far."""
+        aid = uuid.uuid4().hex[:8]
+        title = "%s (%s)" % (r["task"], r.get("trigger_label") or "now")
+        self.card(aid, "working", "ask", title, result="Thinking...")
+        try:
+            prompt = r["action"].get("prompt") or r["task"]
+            if r.get("heard_line"):
+                prompt += " (Just now %s said: \"%s\")" % (r.get("heard_by") or "someone", r["heard_line"])
+            say = brain.answer_question(prompt, self.transcript_lines(), self.reminder_lines())
+        except Exception as e:  # noqa: BLE001
+            print("[task] answer failed:", e)
+            say = "I couldn't work that out."
+        self.card(aid, "done", "ask", title, result=say)
+        self.screen.send("reminders", items=self.scheduler.pending())
+        self.voice.say(say)
+
+    def check_heard(self, entry):
+        """Runs on a worker for each ambient line while any "when someone mentions..." task waits."""
+        speaker = "You" if entry["is_wearer"] else (entry.get("name") or "Someone")
+        for r in self.scheduler.waiting("heard"):
+            trig = r["trigger"]
+            who = (trig.get("who") or "anyone").strip()
+            if who.lower() not in ("anyone", "someone", "anybody", ""):
+                if speaker.lower() != who.lower() and not (who.lower() in ("i", "me", "you") and entry["is_wearer"]):
+                    continue
+            if not keyword_hit(entry["text"], trig.get("keywords")):
+                continue
+            ok = brain.heard_match(entry["text"], speaker, who, trig.get("about") or r["task"])
+            print("[task] heard check %r for %r -> %s" % (entry["text"][:50], r["task"], ok))
+            if ok:                                # None (Gemini unreachable) does not fire
+                self.scheduler.fire(r["id"], heard_line=entry["text"], heard_by=speaker)
+
+    def on_activity(self, e):
+        """The band's own still / walk / run, once a second: drives "when I get up" tasks."""
+        state = getattr(e, "state", None)
+        if state is None:
+            return
+        moving = state in ("walk", "run")
+        self.move_run = self.move_run + 1 if moving == self.move_last else 1
+        self.move_last = moving
+        if self.move_run == 2 and moving != self.moving:      # two readings in a row: a real change
+            self.moving = moving
+            print("[activity] %s" % ("moving" if moving else "still"))
+            self.screen.send("activity", state=state, moving=moving)
+            if self.scheduler.waiting("activity"):
+                self.pool.submit(self.scheduler.fire_activity, "start_moving" if moving else "stop_moving")
 
     # ---- gestures
 
@@ -610,7 +671,8 @@ class Cast:
             return
         first = pending[0]
         more = " and %d more" % (len(pending) - 1) if len(pending) > 1 else ""
-        self.voice.say("%s %s%s." % (first["task"], spoken_time(first["remind_at"]), more))
+        when = spoken_time(first["remind_at"]) if first["remind_at"] else first.get("trigger_label", "")
+        self.voice.say("%s %s%s." % (first["task"], when, more))
 
     def clip(self):
         now = time.time()
@@ -709,6 +771,12 @@ def main():
     else:
         band.configure(motion=50, events=True, audio=True, mic_level=True)
     band.on("notice", cast.on_notice)
+    try:                                         # still / walk / run from the band, once a second
+        band.on("activity", cast.on_activity)
+        band.configure(activity=True)
+        cast.activity_ok = True
+    except Exception as e:  # noqa: BLE001 - tasks on movement are optional
+        print("Activity stream not available:", str(e)[:80])
     print("Microphone on (solid blue light). Tell people nearby. Screen: http://localhost:%d" % HTTP_PORT)
 
     async def run():

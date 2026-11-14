@@ -46,39 +46,61 @@ def _now():
 COMMAND_PROMPT = """You are Cast, a voice assistant in a wristband. The wearer raised the band to
 their mouth and gave a command. Current local time: {now}.
 
-Current reminders (oldest first): {reminders}
+Current tasks and reminders (oldest first): {reminders}
 
 Command: "{text}"
 
 Return JSON with exactly these keys:
-- "intent": "reminder" if they want to be reminded or alerted later, "cancel_reminder" if they
-  want to cancel one, "question" if they are asking about something that was said or about their
-  reminders (e.g. "what did she just say?", "when do I need to move the car?"), "label_speaker" if
+- "intent": "task" if they want something to happen later (a reminder, an alert, a recap, anything
+  with "remind me", "tell me when", "every", "when X happens"), "cancel_reminder" if they want to
+  cancel one, "question" if they are asking NOW about something that was said or about their
+  tasks (e.g. "what did she just say?", "when do I need to move the car?"), "label_speaker" if
   they are telling you who someone is (e.g. "that was Hardik", "the person I'm talking to is Maya"),
   otherwise "other".
 - "name": for "label_speaker", the person's first name; otherwise empty.
-- "cancel": for "cancel_reminder" only: the list of reminders to cancel, copied exactly from the
-  current reminders below. "both", "all", "every" or "my reminders" means all of them. If they
+- "cancel": for "cancel_reminder" only: the list of tasks to cancel, copied exactly from the
+  current tasks above. "both", "all", "every" or "my reminders" means all of them. If they
   name one ("the parking one"), just that one. If unclear, the most recently created (listed last).
-- "task": short label for what to remind them about (empty if not a reminder), e.g. "Move the car".
-- "remind_at": ISO 8601 local time with offset for when to remind them (empty if not a reminder).
-  Work out times from what they said, e.g. "I parked, it ends in 2 hours, remind me 5 minutes
-  before" means now + 1h55m. "in 30 seconds" means now + 30s.
-- "say": one short spoken reply (under 15 words) confirming what you will do, with the time
-  spoken naturally ("at 2:25", "in 30 seconds").
+For "task" (leave these empty otherwise):
+- "task": short label, e.g. "Move the car", "Recap decisions", "Hardik mentions the deadline".
+- "trigger_type": one of
+    "time"     once, at a moment ("at 4", "in 20 minutes", "5 minutes before it ends")
+    "repeat"   again and again ("every 20 minutes")
+    "heard"    when someone says something ("when Hardik mentions the deadline", "if anyone
+               brings up pricing", "whenever someone says my name")
+    "activity" when the wearer moves ("when I get up", "when I start walking", "when I sit down")
+- "remind_at": for "time": ISO 8601 local time with offset. Work it out from what they said, e.g.
+  "I parked, it ends in 2 hours, remind me 5 minutes before" means now + 1h55m.
+- "every_seconds": for "repeat": the interval in seconds (a number).
+- "who": for "heard": the first name of the person who must say it, or "anyone".
+- "about": for "heard": what must be mentioned, a short noun phrase ("the deadline").
+- "keywords": for "heard": 3 to 8 lowercase words or short phrases likely to appear if it is
+  mentioned, including synonyms ("deadline", "due", "submit", "cutoff").
+- "heard_repeat": for "heard": true only if they said whenever / every time / each time.
+- "activity_when": for "activity": "start_moving" (get up, stand up, start walking, leave) or
+  "stop_moving" (sit down, stop, arrive).
+- "action_type": "say" to speak a fixed reminder, or "answer" when what to say must be worked out
+  at that moment from the conversation (a recap, a summary, "what I've promised people", "how
+  long is left", "what did we decide").
+- "action_text": for "say": the reminder as Cast should speak it, e.g. "Move the car".
+- "action_prompt": for "answer": the question Cast should answer at that moment, written as a
+  full question, e.g. "What have we decided in this conversation?".
+- "say": one short spoken reply (under 15 words) confirming what you will do, with any time
+  spoken naturally ("at 2:25", "in 30 seconds", "every 20 minutes").
 Speech may include false starts, filler and self-corrections ("actually...", "no wait"). Use the
-final intent. If the command contains any reminder request, the intent is "reminder" even if they
-also ask for something you can't do; set the reminder and mention briefly what you can't do.
+final intent. If the command contains any request for later, the intent is "task" even if they
+also ask for something you can't do; set the task and mention briefly what you can't do.
 """
 
 ANSWER_PROMPT = """You are Cast, a voice assistant in a wristband. The wearer raised the band to
-their ear and asked a question. Answer only from what Cast heard and the reminders below.
+their mouth and asked a question (or scheduled one for now). Answer only from what Cast heard and
+the tasks below.
 Current local time: {now}.
 
 What Cast heard recently (oldest first; "You" is the wearer, others are labelled by speaker):
 {transcript}
 
-Scheduled reminders:
+Scheduled tasks and reminders:
 {reminders}
 
 Question: "{text}"
@@ -89,23 +111,86 @@ If the answer is not in what was heard, say so briefly.
 
 
 def interpret_command(text, reminders=()):
+    """Returns the model's dict. For intent "task" it also carries "trigger" and "action" ready
+    for the scheduler, and "remind_at_epoch" for timed tasks."""
     now = _now()
     out = ask_json(COMMAND_PROMPT.format(now=now.isoformat(timespec="seconds"), text=text,
                                          reminders=json.dumps(list(reminders)) if reminders else "none"), fast=True)
     if not out:
         out = regex_reminder(text, now) or {"intent": "other", "say": "Sorry, I couldn't do that."}
-    if out.get("intent") == "reminder":
+    if out.get("intent") == "reminder":            # the older name for the same thing
+        out["intent"] = "task"
+    if out.get("intent") == "task":
+        out = build_task(out, text, now)
+    return out
+
+
+def build_task(out, text, now):
+    kind = str(out.get("trigger_type") or "time").strip().lower()
+    task = (out.get("task") or "").strip() or "Reminder"
+    if str(out.get("action_type") or "").strip().lower() == "answer" and (out.get("action_prompt") or "").strip():
+        action = {"type": "answer", "prompt": out["action_prompt"].strip()}
+    else:
+        action = {"type": "say", "text": (out.get("action_text") or "").strip() or task}
+    trigger = None
+    if kind == "repeat":
+        try:
+            every = int(float(out.get("every_seconds") or 0))
+        except (TypeError, ValueError):
+            every = 0
+        if every > 0:
+            trigger = {"type": "repeat", "every_s": every}
+    elif kind == "heard":
+        kws = out.get("keywords") if isinstance(out.get("keywords"), list) else []
+        common = {"you", "your", "name", "time", "date", "that", "this", "with", "about", "have", "will", "they"}
+        kws = [k for k in (str(k).strip().lower() for k in kws) if len(k) >= 4 and k not in common][:10]
+        about = (out.get("about") or "").strip()
+        if not kws and about:
+            kws = [w for w in re.findall(r"[a-z']+", about.lower()) if len(w) > 3]
+        if kws:
+            who = (out.get("who") or "anyone").strip() or "anyone"
+            trigger = {"type": "heard", "who": who, "about": about or kws[0], "keywords": kws,
+                       "repeat": out.get("heard_repeat") is True}
+    elif kind == "activity":
+        when = str(out.get("activity_when") or "").strip().lower()
+        if when in ("start_moving", "stop_moving"):
+            trigger = {"type": "activity", "when": when}
+    if trigger is None:                            # a time, or anything that failed to parse
         try:
             when = dt.datetime.fromisoformat(out["remind_at"])
             if when.tzinfo is None:
                 when = when.astimezone()
-            out["remind_at_epoch"] = when.timestamp()
+            trigger = {"type": "time", "at": when.timestamp()}
         except (KeyError, ValueError, TypeError):
             fallback = regex_reminder(text, now)
             if not fallback:
-                return {"intent": "other", "say": "I didn't catch when to remind you."}
-            out = fallback
+                return {"intent": "other", "say": "I didn't catch when to do that."}
+            trigger = {"type": "time", "at": fallback["remind_at_epoch"]}
+            out.setdefault("say", fallback["say"])
+    out.update(intent="task", task=task, trigger=trigger, action=action)
+    if trigger["type"] == "time":
+        out["remind_at_epoch"] = trigger["at"]
     return out
+
+
+HEARD_PROMPT = """A wristband assistant is waiting for this to happen: {who} mentions {about}.
+
+A line was just said in the conversation. Speaker: {speaker}. Line: "{line}"
+
+Does this line count? It counts only if the speaker is actually talking about {about}
+(not merely using a similar word for something else){who_rule}.
+Return JSON {{"match": true or false}}."""
+
+
+def heard_match(line, speaker, who, about):
+    """The second check for a "heard" trigger, after a keyword hit. None if Gemini can't be reached."""
+    anyone = (who or "anyone").strip().lower() in ("anyone", "someone", "anybody", "")
+    out = ask_json(HEARD_PROMPT.format(
+        who="someone" if anyone else who, about=about, speaker=speaker or "unknown", line=line.replace('"', "'"),
+        who_rule="" if anyone else ", and the speaker is %s" % who), fast=True)
+    if not isinstance(out, dict) or "match" not in out:
+        return None
+    return out.get("match") is True
 
 
 def answer_question(text, transcript_lines, reminder_lines):
@@ -132,7 +217,7 @@ def regex_reminder(text, now):
     if b:
         seconds -= int(b.group(1)) * _UNITS[b.group(2)]
     when = now + dt.timedelta(seconds=max(5, seconds))
-    return {"intent": "reminder", "task": "Reminder", "remind_at": when.isoformat(),
+    return {"intent": "task", "task": "Reminder", "remind_at": when.isoformat(),
             "remind_at_epoch": when.timestamp(), "say": "Okay, I'll remind you at %s." % when.strftime("%-I:%M")}
 
 
