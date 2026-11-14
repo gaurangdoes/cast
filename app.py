@@ -159,6 +159,7 @@ class Cast:
         self.decoder = PcmDecoder()
         self.last_voice = None
         self.last_run_end = None
+        self.turn = None                      # the stretch of continuous speech being labelled
         self.last_seq = None
         self.pending_cmd = None               # raised-wrist speech collected until the speaker pauses
         self.last_partial = 0.0
@@ -271,9 +272,25 @@ class Cast:
             # Nemotron only decides where the speaker changes; who it is comes from this
             # stretch's own audio, never from the context before it
             vid, sim = self.voices.identify(self.audio.slice(start - 0.05, end + 0.05))
-            if vid is None:                                  # too short to tell: same person as
-                recent = self.last_run_end is not None and start - self.last_run_end < 1.0   # a moment ago
-                vid = self.last_voice if recent and self.last_voice is not None else UNKNOWN
+            # Someone still talking (under 0.7 s since their last words, and Nemotron saw no
+            # change of speaker) is judged on everything they have said in this turn: longer
+            # audio is what makes a voiceprint reliable (81% right at 1 s, 95% at 3 s).
+            t = self.turn
+            continuing = (t is not None and r is runs[0] and start - t["end"] < 0.7)
+            changed = vid is not None and vid >= 0 and t is not None and vid != t["vid"] and sim >= 0.20
+            if continuing and not changed:
+                jv, js = self.voices.identify(self.audio.slice(max(t["start"], end - 8.0), end + 0.05))
+                if jv is not None and jv >= 0:
+                    vid, sim = jv, js
+                elif t["vid"] >= 0:
+                    vid = t["vid"]                           # still undecided: keep who it was
+                t["end"] = end
+                if vid is not None and vid >= 0:
+                    t["vid"] = vid
+            else:
+                self.turn = {"start": start, "end": end, "vid": vid if vid is not None else UNKNOWN}
+            if vid is None:
+                vid = UNKNOWN
             self.last_run_end = end
             vid = self.voices.resolve(vid)
             self.last_voice = vid
@@ -293,8 +310,10 @@ class Cast:
         vid, sim = run["voice"], run["sim"]
         # Who is being talked to? Three signals, measured on this band: loudness at the mic
         # (12 dB at the mouth, 21 resting, 27 someone else), the wrist pose, and whose voice it is.
-        mine = vid == self.voices.wearer_id or vid < 0           # the wearer, or undecided
         loud = rms is not None and rms <= RAISED_DB                 # anyone speaking right into the band
+        if vid < 0 and loud and self.voices.wearer_id is not None:
+            vid = self.voices.wearer_id       # undecided voice, but this loud at the band is the wearer
+        mine = vid == self.voices.wearer_id or vid < 0           # the wearer, or undecided
         near = rms is not None and rms <= NEAR_DB and pose == "mouth" and mine   # softer, wrist raised
         with self.cmd_lock:
             ongoing = self.pending_cmd is not None and mine         # still finishing a slow command

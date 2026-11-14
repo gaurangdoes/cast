@@ -67,11 +67,22 @@ class Voices:
                     c = x[a:a + n]
                     if np.sqrt(np.mean(c.astype(float) ** 2)) > 0.35 * ref:      # skip silence
                         embs.append(self.embed(c.tobytes()))
-            self.enrolled[i] = np.mean(embs, axis=0)
+            per_file = {}
+            self.enrolled[i] = []
+            n_files = 0
+            for f in files:
+                if f.stem.rsplit("_", 1)[0] != label:
+                    continue
+                x = np.frombuffer(f.read_bytes(), dtype=np.int16)
+                ref = np.sqrt(np.mean(x.astype(float) ** 2))
+                fe = [self.embed(x[a:a + n].tobytes()) for a in range(0, len(x) - n, n // 2)
+                      if np.sqrt(np.mean(x[a:a + n].astype(float) ** 2)) > 0.35 * ref]
+                if fe:                                   # a voice sounds different at the mouth, resting,
+                    self.enrolled[i].append(np.mean(fe, axis=0))   # at the side: keep one print per recording
             if label != "wearer":
                 self.names[i] = given.get(label) or "Person %d" % (i + 1)
-        self.mu = np.mean(list(self.enrolled.values()), axis=0)
-        self.centred = {i: self._unit(c - self.mu) for i, c in self.enrolled.items()}
+        self.mu = np.mean([c for cs in self.enrolled.values() for c in cs], axis=0)
+        self.centred = {i: [self._unit(c - self.mu) for c in cs] for i, cs in self.enrolled.items()}
         self.wearer_id = 0
         self.labels = labels
         return True
@@ -85,11 +96,16 @@ class Voices:
         if seconds < 1.0:
             return None, 0.0
         e = self._unit(self.embed(pcm16) - self.mu)
-        scores = sorted(((float(e @ c), i) for i, c in self.centred.items()), reverse=True)
+        scores = sorted(((max(float(e @ c) for c in cs), i) for i, cs in self.centred.items()), reverse=True)
         margin = scores[0][0] - scores[1][0]
         # commit only on a clear lead; measured: margin >= 0.10 is right 97-100% of the time on
         # clips of 1.5 s and more, and about a quarter of clips stay undecided
         need = 0.10 if seconds >= 1.5 else 0.16
+        if margin >= 0.25 and seconds >= 2.5:
+            # a clear, long clip: remember it as one more example of this person's voice today
+            cs = self.centred[scores[0][1]]
+            if len(cs) < 12:
+                cs.append(e)
         return (scores[0][1] if margin >= need else UNKNOWN), margin
 
     def identify(self, pcm16):
