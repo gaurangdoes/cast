@@ -321,3 +321,50 @@ h2 { font-family: var(--mono); font-weight: 500; font-size: 12px; letter-spacing
 .teach code { font-family: var(--mono); font-size: 11px; }
 .teach-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
 .teach .btn { padding: 6px 10px; font-size: 12px; }
+
+/* ---- guided setup ---- */
+.setup { min-height: 100%; display: flex; flex-direction: column; }
+.setup-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 24px; border-bottom: 1px solid var(--line); }
+.setup-top .brand { font-size: 20px; font-weight: 700; letter-spacing: 0; }
+.setup-top .brand::before { content: "\25C6"; margin-right: 8px; font-size: 14px; vertical-align: 2px; }
+.setup-sub { font-weight: 400; color: var(--muted); margin-left: 6px; }
+.setup-top-right { display: flex; align-items: center; gap: 16px; font-size: 13px; color: var(--muted); }
+.setup-link { color: var(--muted); }
+.setup-progress { font-variant-numeric: tabular-nums; }
+.setup-body { flex: 1; display: grid; grid-template-columns: 260px minmax(0, 640px); gap: 28px; padding: 28px 24px; justify-content: center; align-items: start; }
+.setup-nav { display: flex; flex-direction: column; gap: 18px; }
+.setup-group { display: flex; flex-direction: column; gap: 2px; }
+.setup-eyebrow { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 4px; }
+.setup-navitem { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 7px 10px; border: 1px solid transparent; border-radius: 8px; background: none; font: inherit; font-size: 14px; color: var(--fg); cursor: pointer; }
+.setup-navitem:hover:not(:disabled) { background: var(--accent-soft); }
+.setup-navitem.on { background: var(--panel); border-color: var(--line); font-weight: 600; }
+.setup-navitem.done { color: var(--muted); }
+.setup-navitem:disabled { cursor: default; opacity: .6; }
+.setup-navitem em { font-style: normal; color: var(--faint); font-weight: 400; }
+.setup-navitem:focus-visible, .setup-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.setup-tick { flex: none; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line); display: grid; place-items: center; font-size: 11px; background: var(--panel); }
+.setup-navitem.done .setup-tick { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+.setup-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 28px 30px; display: flex; flex-direction: column; gap: 12px; }
+.setup-center { max-width: 640px; margin: 48px auto 0; width: calc(100% - 48px); }
+.setup-card h1 { margin: 0; font-size: 26px; font-weight: 700; line-height: 1.2; }
+.setup-say { margin: 4px 0 0; font-size: 18px; line-height: 1.45; }
+.setup-detail { margin: 0; font-size: 14px; color: var(--muted); line-height: 1.55; }
+.setup-list { margin: 4px 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 16px; }
+.setup-actions { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.setup-btn { font: 600 15px var(--body); padding: 10px 20px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
+.setup-btn.ghost { background: var(--panel); color: var(--fg); border-color: var(--line); }
+.setup-btn:disabled { opacity: .5; cursor: default; }
+.setup-ok { margin: 0; font-size: 13px; color: var(--ok); }
+.setup-error { margin: 0; font-size: 14px; color: var(--bad); }
+.setup-rec { align-items: center; text-align: center; padding: 40px 30px; }
+.setup-rec.live { border-color: var(--bad); background: var(--bad-soft); }
+.setup-big { font-size: 96px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; margin: 8px 0; }
+.setup-big small { font-size: 36px; font-weight: 600; margin-left: 4px; color: var(--muted); }
+.setup-result { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.setup-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; border-radius: 8px; background: var(--inset); font-size: 14px; }
+.setup-row.ok b { color: var(--ok); }
+.setup-row.warn b { color: var(--warn); }
+.setup-livebox { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 6px; }
+.setup-livebox > div { background: var(--inset); border-radius: 10px; padding: 14px 16px; }
+.setup-livebig { font-size: 30px; font-weight: 700; text-transform: capitalize; }
+@media (max-width: 860px) { .setup-body { grid-template-columns: 1fr; } }

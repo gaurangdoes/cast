@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 import Calibrate from './Calibrate.tsx'
+import Setup from './Setup.tsx'
 
 function Root() {
   const [hash, setHash] = useState(location.hash)
@@ -11,7 +12,9 @@ function Root() {
     window.addEventListener('hashchange', on)
     return () => window.removeEventListener('hashchange', on)
   }, [])
-  return hash === '#calibrate' ? <Calibrate /> : <App />
+  if (hash === '#calibrate' || hash === '#setup') return <Setup />
+  if (hash === '#calibrate-advanced') return <Calibrate />
+  return <App />
 }
 
 createRoot(document.getElementById('root')!).render(
