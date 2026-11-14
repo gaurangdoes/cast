@@ -14,8 +14,9 @@ import speech  # noqa: E402  (the kit's speech module)
 
 
 class DiarizedDeepgram(speech.DeepgramSpeech):
-    """on_segment(segment) is called for every finished stretch of speech by one speaker:
-    {"speaker": int, "text": str, "start": float, "end": float}  (seconds since the stream began)
+    """on_segment(words) is called for every finished stretch of speech, with each word's
+    {"text", "start", "end"} in seconds since the stream began. Who said which word is
+    decided in app.py (Nemotron + voiceprints), not by Deepgram.
     on_partial(text) gets the live guess while someone is still talking."""
 
     def __init__(self, on_segment, on_partial=None, **options):
@@ -33,9 +34,10 @@ class DiarizedDeepgram(speech.DeepgramSpeech):
             if text and self.on_partial:
                 self.on_partial(text)
             return
-        words = best.get("words") or []
-        for seg in group_by_speaker(words):
-            self.on_segment(seg)
+        words = [{"text": w.get("punctuated_word") or w.get("word") or "", "start": float(w.get("start", 0)),
+                  "end": float(w.get("end", 0))} for w in (best.get("words") or [])]
+        if words:
+            self.on_segment(words)
         # keep the kit's own bookkeeping (finals, text) working too
         super()._message(message)
 

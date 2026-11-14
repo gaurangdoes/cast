@@ -4,3 +4,5 @@ vexo-open-kit/
 __pycache__/
 *.pyc
 data/
+nemotron_trial/
+web/node_modules/

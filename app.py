@@ -33,6 +33,7 @@ import websockets  # noqa: E402
 
 import brain  # noqa: E402
 import ears  # noqa: E402
+import nemotron  # noqa: E402
 from concurrent.futures import ThreadPoolExecutor  # noqa: E402
 from scheduler import Scheduler, spoken_time  # noqa: E402
 from poses import MODE_OF_POSE, Loudness, PoseTracker, load_calibration  # noqa: E402
@@ -42,6 +43,7 @@ HTTP_PORT = 8000
 WS_PORT = 8765
 WEARER_MIN = 0.6
 CLIP_SECONDS = 30
+CONTEXT_S = 6.0          # seconds of earlier audio given to Nemotron with each sentence
 
 
 def load_env():
@@ -167,26 +169,76 @@ class Cast:
     def on_partial(self, text):
         self.screen.send("partial", text=text)
 
-    def on_segment(self, seg):
+    def on_segment(self, words):
+        """A finished stretch of speech from Deepgram. Nemotron splits it into turns (who spoke
+        when, even mid-sentence); each turn's voiceprint gives it a stable speaker id."""
+        for run in self.split_by_speaker(words):
+            self.handle_run(run)
+
+    def split_by_speaker(self, words):
+        w0, w1 = words[0]["start"], words[-1]["end"]
+        win_start = max(0.0, w0 - CONTEXT_S)                 # extra audio before helps Nemotron
+        pcm = self.audio.slice(win_start, w1 + 0.15)
+        turns = []
+        if len(pcm) > 16000:                                 # at least 0.5 s
+            try:
+                turns = [(spk, win_start + a, win_start + b) for spk, a, b in nemotron.diarize(pcm)]
+            except Exception as e:  # noqa: BLE001
+                print("[nemotron] failed:", e)
+        # local Nemotron speaker -> global voice id, from all of that speaker's audio in the window
+        local_to_voice = {}
+        for spk in {t[0] for t in turns}:
+            audio = b"".join(self.audio.slice(a, b) for s2, a, b in turns if s2 == spk)
+            vid, sim = self.voices.identify(audio)
+            if vid is not None:
+                local_to_voice[spk] = (vid, sim)
+
+        def speaker_of(w):
+            mid = (w["start"] + w["end"]) / 2
+            best, gap = None, 1e9
+            for spk, a, b in turns:
+                d = 0 if a <= mid <= b else min(abs(mid - a), abs(mid - b))
+                if d < gap:
+                    best, gap = spk, d
+            return best if gap < 1.0 else None
+
+        runs = []
+        for w in words:
+            spk = speaker_of(w)
+            if runs and runs[-1]["local"] == spk:
+                runs[-1]["words"].append(w)
+            else:
+                runs.append({"local": spk, "words": [w]})
+        out = []
+        for r in runs:
+            start, end = r["words"][0]["start"], r["words"][-1]["end"]
+            vid, sim = local_to_voice.get(r["local"], (None, 0.0))
+            if vid is None:                                  # no turn found: fingerprint the words themselves
+                vid, sim = self.voices.identify(self.audio.slice(start - 0.05, end + 0.05))
+            if vid is None:
+                vid = self.last_voice if self.last_voice is not None else 0
+            self.last_voice = vid
+            out.append({"voice": vid, "sim": sim, "start": start, "end": end,
+                        "text": " ".join(w["text"] for w in r["words"])})
+        return out
+
+    def handle_run(self, run):
         t0 = self.audio_t0 or time.time()
-        start, end = t0 + seg["start"], t0 + seg["end"]
+        start, end = t0 + run["start"], t0 + run["end"]
         if self.voice.speaking(start, end):
             return                                   # that was Cast's own voice
         pose = self.poses.pose_during(start, end)
         rms = self.loud.level_during(start, end)
-        vid, sim = self.voices.identify(self.audio.slice(seg["start"] - 0.05, seg["end"] + 0.05))
-        if vid is None:                              # too short to fingerprint: assume same as last
-            vid = self.last_voice if self.last_voice is not None else 0
-        self.last_voice = vid
+        vid, sim = run["voice"], run["sim"]
         score = self.wearer_score(vid, rms, pose)
         mode = MODE_OF_POSE.get(pose, "ambient")
-        entry = {"speaker": vid, "text": seg["text"], "start": start, "end": end,
+        entry = {"speaker": vid, "text": run["text"], "start": start, "end": end,
                  "pose": pose, "rms_db": rms, "wearer": score, "mode": mode,
                  "is_wearer": vid == self.voices.wearer_id, "voice_sim": round(sim, 2)}
         self.segments.append(entry)
         self.screen.send("segment", **entry)
         print("[voice %s%s sim %.2f | %-10s | wearer %.2f | %s] %s" % (
-            vid, "*" if entry["is_wearer"] else "", sim, pose, score, mode, seg["text"]))
+            vid, "*" if entry["is_wearer"] else "", sim, pose, score, mode, run["text"]))
         if mode in ("command", "ask"):
             if score >= WEARER_MIN:
                 self.act(mode, entry)
