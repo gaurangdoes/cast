@@ -23,7 +23,10 @@ def _gemini(prompt, model, timeout):
     req = urllib.request.Request(URL % model, data=json.dumps(body).encode(),
                                  headers={"x-goog-api-key": key, "Content-Type": "application/json"})
     data = json.load(urllib.request.urlopen(req, timeout=timeout))
-    return json.loads(data["candidates"][0]["content"]["parts"][0]["text"])
+    out = json.loads(data["candidates"][0]["content"]["parts"][0]["text"])
+    if isinstance(out, list):                 # Gemini sometimes wraps the object in a list
+        out = out[0] if out else {}
+    return out if isinstance(out, dict) else {}
 
 
 def ask_json(prompt, fast=False):

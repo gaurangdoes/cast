@@ -49,7 +49,7 @@ WEARER_MIN = 0.6
 REFUSE_BELOW = 0.35     # only refuse when fairly sure it's someone else
 COMMAND_SETTLE_S = 1.2  # wait this long after the last raised-wrist words before acting
 CLIP_SECONDS = 30
-RAISED_DB = 16          # at or below this loudness someone is talking into the band
+RAISED_DB = 14          # at or below this loudness someone is talking into the band
 NAME_HINT = re.compile(r"\b(hey|hi|hello|yo|thanks|thank you|i'm|i am|this is|my name)\b", re.I)
 CONTEXT_S = 6.0          # seconds of earlier audio given to Nemotron with each sentence
 
@@ -152,6 +152,7 @@ class Cast:
         self.audio = AudioBuffer()
         self.decoder = PcmDecoder()
         self.last_voice = None
+        self.last_seq = None
         self.pending_cmd = None               # raised-wrist speech collected until the speaker pauses
         self.last_partial = 0.0
         self.cmd_lock = threading.Lock()
@@ -184,11 +185,24 @@ class Cast:
     def on_audio(self, a):
         if self.audio_t0 is None:
             self.audio_t0 = time.time()
-        self.ears.feed(a)
+        seq = getattr(a, "seq", None)
+        if seq is not None and self.last_seq is not None and seq < self.last_seq - 1000:
+            self.new_decoder()                       # the band restarted its audio stream
+        self.last_seq = seq
         try:
-            self.audio.add(self.decoder.feed(a))
-        except Exception:  # noqa: BLE001 - a bad packet must not stop transcription
-            pass
+            pcm = self.decoder.feed(a)               # decode once: lost packets are filled in here,
+            if pcm:                                  # so Deepgram's clock and our buffer stay in step
+                self.ears.feed_pcm(pcm)
+                self.audio.add(pcm)
+        except Exception as e:  # noqa: BLE001 - a bad packet must not stop transcription
+            self.audio_errors = getattr(self, "audio_errors", 0) + 1
+            if self.audio_errors in (1, 50):
+                print("[audio] feed failed:", e)
+
+    def new_decoder(self):
+        from vexo_open.audio import PcmDecoder
+        self.decoder = PcmDecoder()
+        self.last_seq = None
 
     def on_notice(self, n):
         kind = n.get("kind") if isinstance(n, dict) else getattr(n, "kind", n)
@@ -211,6 +225,9 @@ class Cast:
     def on_segment(self, words):
         """A finished stretch of speech from Deepgram. Nemotron splits it into turns (who spoke
         when, even mid-sentence); each turn's voiceprint gives it a stable speaker id."""
+        t0 = self.audio_t0 or time.time()
+        if self.voice.speaking(t0 + words[0]["start"], t0 + words[-1]["end"]):
+            return                                   # Cast's own spoken reply
         for run in self.split_by_speaker(words):
             self.handle_run(run)
 
@@ -405,9 +422,13 @@ class Cast:
                     say = brain.answer_question(entry["text"], self.transcript_lines(), self.reminder_lines())
                     self.screen.send("action", id=aid, status="done", mode="ask", text=entry["text"], result=say)
                 elif intent == "label_speaker":
-                    others = [s for s in self.segments if s["speaker"] != self.voices.wearer_id]
+                    others = [s for s in list(self.segments)
+                              if s["speaker"] >= 0 and s["mode"] != "command"
+                              and s["speaker"] not in (self.voices.wearer_id, entry["speaker"])]
                     name = (out.get("name") or "").strip().title()
-                    if others and name:
+                    if self.voices.wearer_id is None:
+                        say = "I don't know your voice yet. Talk into the band first."
+                    elif others and name:
                         self.set_name(others[-1]["speaker"], name, "you told me")
                         say = "Got it, that's %s." % name
                     else:
@@ -417,7 +438,7 @@ class Cast:
                     r = self.scheduler.cancel_latest()
                     say = "Cancelled %s." % r["task"] if r else "There's nothing to cancel."
                     if r:
-                        self.screen.send("reminder", status="cancelled", **r)
+                        self.screen.send("reminder", **r)
                     self.screen.send("reminders", items=self.scheduler.pending())
                     self.screen.send("action", id=aid, status="done", mode=mode, text=entry["text"], result=say)
                 else:
@@ -498,6 +519,7 @@ class Cast:
             self.voice.say("Off the record.")
             self.last_toggle = time.time()
         else:
+            self.new_decoder()                # the band numbers audio packets from 0 again
             self.band.configure(audio=True, mic_level=True)
             if self.audio_t0 is not None:     # Deepgram's clock only counts audio it received
                 self.audio_t0 += time.time() - self.pause_started
@@ -560,7 +582,8 @@ def main():
     band = None
     for attempt in range(90):            # keep trying ~3 minutes: double-tap the band any time
         try:
-            band = Band.connect(args.number or 42, "sim" if args.sim else ("serial" if args.usb else "ble"), **extra)
+            band = Band.connect(args.number or 42, "sim" if args.sim else ("serial" if args.usb else "ble"),
+                                auto_reconnect=True, **extra)
             break
         except Exception as e:  # noqa: BLE001
             if attempt == 0:
@@ -573,7 +596,7 @@ def main():
     cast = Cast(band, screen, voice)
     if not cast.poses.calibrated:
         print("No calibration yet: every pose reads as 'moving'. Run calibrate.py first.")
-    cast.ears = ears.DiarizedDeepgram(on_segment=cast.on_segment, on_partial=cast.on_partial)
+    cast.ears = ears.DiarizedDeepgram(on_segment=cast.on_segment, on_partial=cast.on_partial, send="pcm")
     cast.ears.start()
 
     band.on("motion", cast.on_motion)
@@ -581,6 +604,21 @@ def main():
     band.on("audio", cast.on_audio)
     band.on("double-tap", cast.on_double_tap)
     band.on("tap", cast.on_tap)
+
+    lost_at = [None]
+
+    def on_reconnecting(e):
+        lost_at[0] = lost_at[0] or time.time()
+        print("[band] link lost, reconnecting...")
+
+    def on_reconnected(e):
+        cast.new_decoder()
+        if cast.audio_t0 is not None and lost_at[0]:
+            cast.audio_t0 += time.time() - lost_at[0]
+        lost_at[0] = None
+        print("[band] reconnected")
+    band.on("reconnecting", on_reconnecting)
+    band.on("reconnected", on_reconnected)
     try:
         band.set_tx_power(4)                 # strongest radio: the room is full of Bluetooth
     except Exception as e:  # noqa: BLE001

@@ -6,6 +6,7 @@ voices heard so far: close enough to one of them -> same person, otherwise a new
 Sentences spoken with the wrist raised and clearly loud teach Cast which voice is the wearer.
 """
 import json
+import os
 import threading
 
 import numpy as np
@@ -81,6 +82,7 @@ class Voices:
                 a["n"] = min(a["n"] + b["n"], 20)
                 self.speakers.remove(b)
                 self.aliases[b["id"]] = a["id"]
+                self.wearer_votes[a["id"]] = self.wearer_votes.get(a["id"], 0) + self.wearer_votes.pop(b["id"], 0)
                 if b["id"] in self.names and a["id"] not in self.names:
                     self.names[a["id"]] = self.names.pop(b["id"])
                 if self.wearer_id == b["id"]:
@@ -98,17 +100,19 @@ class Voices:
         with self.lock:
             if not self.speakers:
                 return
-            np.savez(path, ids=[s["id"] for s in self.speakers], n=[s["n"] for s in self.speakers],
+            tmp = str(path) + ".tmp.npz"
+            np.savez(tmp, ids=[s["id"] for s in self.speakers], n=[s["n"] for s in self.speakers],
                      centroids=np.stack([s["centroid"] for s in self.speakers]),
                      meta=json.dumps({"wearer_id": self.wearer_id, "next_id": self.next_id,
                                       "votes": {str(k): v for k, v in self.wearer_votes.items()},
                                       "names": {str(k): v for k, v in self.names.items()}}))
+            os.replace(tmp, path)
 
     def load(self, path):
         try:
             d = np.load(path)
             meta = json.loads(str(d["meta"]))
-        except (OSError, ValueError, KeyError):
+        except Exception:  # noqa: BLE001 - a damaged file just means starting fresh
             return False
         with self.lock:
             self.speakers = [{"id": int(i), "centroid": c, "n": int(n)} for i, c, n in zip(d["ids"], d["centroids"], d["n"])]
@@ -123,7 +127,13 @@ class Voices:
         with self.lock:
             self.wearer_votes[speaker_id] = self.wearer_votes.get(speaker_id, 0) + (1 if yes else -1)
             best = max(self.wearer_votes.items(), key=lambda kv: kv[1])
-            self.wearer_id = best[0] if best[1] > 0 else None
+            current = self.wearer_votes.get(self.wearer_id, 0) if self.wearer_id is not None else None
+            if current is None:
+                self.wearer_id = best[0] if best[1] > 0 else None
+            elif best[0] != self.wearer_id and best[1] > current and best[1] > 0:
+                self.wearer_id = best[0]              # someone else clearly has more evidence
+            elif current <= -2:
+                self.wearer_id = None                 # one stray "no" never clears the wearer
 
 
 class AudioBuffer:

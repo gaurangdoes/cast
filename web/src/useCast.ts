@@ -95,7 +95,8 @@ function applyEvent(s: CastState, m: CastEvent): CastState {
       const reminders = m.items
         .filter((i) => i.status !== 'cancelled')
         .map((i) => ({ ...i, dueSince: i.status === 'due' ? (prev.get(i.id)?.dueSince ?? Date.now()) : undefined }))
-      return { ...s, reminders }
+      const due = s.reminders.filter((r) => r.status === 'due' && !reminders.some((x) => x.id === r.id))
+      return { ...s, reminders: [...due, ...reminders] }
     }
     default:
       return s
