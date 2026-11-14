@@ -23,6 +23,8 @@ import numpy as np  # noqa: E402
 import websockets  # noqa: E402
 
 import calibrate  # noqa: E402  (pose list, talk tests, summarize)
+import gestures  # noqa: E402
+import subprocess  # noqa: E402
 from vexo_open.sync import Band  # noqa: E402
 
 OUT = ROOT / "data" / "calibration.json"
@@ -88,6 +90,95 @@ class Calib:
         self.active = None            # {"id", "phase", "left"}
         self.loop = None
         self.clients = set()
+        self.lab = {"recording": None, "report": self._load_report(), "live": False, "detections": {}, "last": None}
+        self.lab_buf = None              # fast samples while a lab recording runs
+        self.detector = None
+
+    # ---- gesture lab
+
+    @staticmethod
+    def _load_report():
+        try:
+            return json.loads((gestures.DATA / "report.json").read_text())
+        except (OSError, ValueError):
+            return None
+
+    def say(self, text):
+        subprocess.Popen(["say", "-r", "210", text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def lab_record(self, label, reps):
+        if self.status != "connected" or self.lab["recording"] or self.active:
+            return
+        threading.Thread(target=self._lab_record, args=(label, reps), daemon=True).start()
+
+    def _lab_record(self, label, reps):
+        name = {"fist": "close and open your fist", "thumbs_up": "thumbs up, then back",
+                "none": "move normally"}.get(label, label)
+        self.band.configure(motion=gestures.RATE, sensors="accel")
+        self.lab_buf = []
+        cues = []
+        try:
+            if label == "none":
+                self.lab["recording"] = {"label": label, "rep": 0, "reps": 0, "phase": "go", "left": reps}
+                self.push_state()
+                self.say("Move normally for %d seconds. Talk with your hands, scratch, rest. Don't do the gestures." % reps)
+                for left in range(reps, 0, -1):
+                    self.lab["recording"]["left"] = left
+                    self.push_state()
+                    time.sleep(1)
+            else:
+                self.lab["recording"] = {"label": label, "rep": 0, "reps": reps, "phase": "ready"}
+                self.push_state()
+                self.say("Get ready. When I say now, %s." % name)
+                time.sleep(3.5)
+                for i in range(reps):
+                    self.lab["recording"] = {"label": label, "rep": i + 1, "reps": reps, "phase": "now"}
+                    self.push_state()
+                    if self.lab_buf:
+                        cues.append((self.lab_buf[-1][0] - self.lab_buf[0][0]) / 1000.0 + 0.25)  # + speech delay
+                    self.say("now")
+                    time.sleep(0.8)
+                    self.lab["recording"]["phase"] = "wait"
+                    self.push_state()
+                    time.sleep(1.8)
+                self.say("Done.")
+            buf = self.lab_buf
+            if buf and len(buf) > gestures.RATE:
+                a = np.array(buf)
+                gestures.Recordings.save(label, a[:, 0], a[:, 1:4], cues)
+        finally:
+            self.lab_buf = None
+            self.lab["recording"] = None
+            self.band.configure(motion=50, sensors="both")
+            self.push_state()
+
+    def lab_train(self):
+        self.lab["report"] = {"training": True}
+        self.push_state()
+        try:
+            self.lab["report"] = gestures.train()
+        except Exception as e:  # noqa: BLE001
+            self.lab["report"] = {"error": str(e)}
+        self.push_state()
+
+    def lab_live(self, on):
+        if on:
+            try:
+                self.detector = gestures.LiveDetector()
+            except Exception as e:  # noqa: BLE001
+                self.lab["report"] = dict(self.lab.get("report") or {}, error="Train first (%s)" % e)
+                self.push_state()
+                return
+            self.band.configure(motion=gestures.RATE, sensors="accel")
+            self.lab.update(live=True, detections={}, last=None)
+        else:
+            self.lab["live"] = False
+            self.detector = None
+            self.band.configure(motion=50, sensors="both")
+        self.push_state()
+
+    def lab_state(self):
+        return dict(self.lab, counts=gestures.Recordings.counts())
 
     # ---- band
 
@@ -112,8 +203,22 @@ class Calib:
         self.push_state()
 
     def on_motion(self, m):
+        if self.lab_buf is not None:
+            self.lab_buf.append((m.t, m.ax, m.ay, m.az))
+        if self.detector is not None:
+            hit = self.detector.feed(m.t, m.ax, m.ay, m.az)
+            if hit:
+                label, prob = hit
+                self.lab["detections"][label] = self.lab["detections"].get(label, 0) + 1
+                self.lab["last"] = {"label": label, "prob": prob, "at": time.time()}
+                self.say(label.replace("_", " "))
+                self.push_state()
         if getattr(self, "fast", None) is not None and self.rec.on:
             self.fast.append((m.t, m.ax, m.ay, m.az))
+            return
+        if m.gx is None:                      # accelerometer-only fast mode
+            v = (m.ax, m.ay, m.az)
+            self.g = list(v) if self.g is None else [g + 0.04 * (x - g) for g, x in zip(self.g, v)]
             return
         self.rec.on_motion(m)
         v = (m.ax, m.ay, m.az)
@@ -215,7 +320,7 @@ class Calib:
                 done["%s:%s" % (kind, k)] = v
         return json.dumps({"kind": "cal_state", "band": "Vexo-HACK-%02d" % self.number, "status": self.status,
                            "error": self.error, "steps": STEPS, "done": done, "active": self.active,
-                           "analysis": self.analysis()})
+                           "analysis": self.analysis(), "lab": self.lab_state()})
 
     def live_msg(self):
         g = None
@@ -258,6 +363,15 @@ class Calib:
                     self.record(str(cmd.get("step")))
                 elif cmd.get("cmd") == "reset":
                     self.reset()
+                elif cmd.get("cmd") == "lab_record":
+                    self.lab_record(str(cmd.get("label")), int(cmd.get("reps", 10)))
+                elif cmd.get("cmd") == "lab_train":
+                    threading.Thread(target=self.lab_train, daemon=True).start()
+                elif cmd.get("cmd") == "lab_live":
+                    threading.Thread(target=self.lab_live, args=(bool(cmd.get("on")),), daemon=True).start()
+                elif cmd.get("cmd") == "lab_reset_counts":
+                    self.lab.update(detections={}, last=None)
+                    self.push_state()
         finally:
             self.clients.discard(ws)
 

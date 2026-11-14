@@ -128,3 +128,24 @@ h2 { font-family: var(--mono); font-weight: 500; font-size: 12px; letter-spacing
 .cal-row.ok b { color: var(--ok); }
 .cal-row.bad b { color: var(--bad); }
 @media (max-width: 1100px) { .cal-grid { grid-template-columns: 1fr; } }
+
+/* ---- gesture lab ---- */
+.lab { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+.lab-head { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+.lab-head h2 { font-family: var(--display); font-size: 22px; text-transform: none; letter-spacing: 0; color: var(--fg); }
+.lab-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.lab-card { background: var(--inset); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.lab-card .btn { align-self: flex-start; }
+.lab-count { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.lab-rec { border-radius: 12px; padding: 18px; text-align: center; border: 2px solid var(--command); background: color-mix(in srgb, var(--command) 8%, var(--panel)); }
+.lab-rec.now, .lab-rec.go { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--panel)); }
+.lab-rec-name { font-family: var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+.lab-rec-big { font-family: var(--display); font-size: 64px; font-weight: 700; line-height: 1.1; }
+.lab-report { display: flex; flex-direction: column; gap: 6px; }
+.lab-acc { font-family: var(--display); font-size: 26px; font-weight: 700; }
+.lab-live { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.lab-counters { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; flex-basis: 100%; }
+.lab-counter { min-width: 140px; text-align: center; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--inset); transition: background .2s, border-color .2s; }
+.lab-counter.hit { background: color-mix(in srgb, var(--ok) 22%, var(--panel)); border-color: var(--ok); }
+.lab-counter-n { font-family: var(--display); font-size: 48px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.lab-counter-k { font-family: var(--mono); color: var(--muted); }

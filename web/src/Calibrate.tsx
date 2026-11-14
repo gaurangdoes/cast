@@ -12,6 +12,13 @@ type CalState = {
   band: string; status: 'idle' | 'connecting' | 'connected' | 'error' | 'disconnected'; error: string | null
   steps: Step[]; done: Record<string, Summary>; active: { id: string; phase: 'countdown' | 'recording'; left: number } | null
   analysis: Analysis
+  lab?: Lab
+}
+type LabReport = { accuracy?: number; samples?: Record<string, number>; per_label?: Record<string, { recall: number; false_alarms: number }>; error?: string; training?: boolean }
+type Lab = {
+  recording: { label: string; rep: number; reps: number; phase: string; left?: number } | null
+  report: LabReport | null; live: boolean; detections: Record<string, number>
+  last: { label: string; prob: number; at: number } | null; counts: Record<string, number>
 }
 type Live = { gravity: number[] | null; gyro: number; rms_db: number | null; nearest: { pose: string; deg: number } | null }
 
@@ -80,6 +87,8 @@ export default function Calibrate() {
           )}
         </section>
       )}
+
+      {state && connected && state.lab && <GestureLab lab={state.lab} send={send} />}
 
       {state && connected && (
         <div className="cal-grid">
@@ -205,5 +214,92 @@ function AnalysisView({ a }: { a: Analysis }) {
         )
       })}
     </div>
+  )
+}
+
+const GESTURES: { id: string; name: string; how: string }[] = [
+  { id: 'fist', name: 'Fist', how: 'Close your fist hard, then open it' },
+  { id: 'thumbs_up', name: 'Thumbs up', how: 'Thumbs up, then bring your hand back' },
+]
+
+function GestureLab({ lab, send }: { lab: Lab; send: (c: object) => void }) {
+  const rec = lab.recording
+  const busy = !!rec
+  const rpt = lab.report
+  const [flash, setFlash] = useState<string | null>(null)
+  useEffect(() => {
+    if (!lab.last) return
+    setFlash(lab.last.label)
+    const t = window.setTimeout(() => setFlash(null), 900)
+    return () => window.clearTimeout(t)
+  }, [lab.last?.at])
+  return (
+    <section className="lab">
+      <div className="lab-head">
+        <h2>Gesture lab</h2>
+        <span className="cal-hint">Record each gesture 10 times, plus normal movement, then train and test live.</span>
+      </div>
+
+      {rec && (
+        <div className={`lab-rec ${rec.phase}`}>
+          <div className="lab-rec-name">{rec.label === 'none' ? 'Normal movement' : GESTURES.find((g) => g.id === rec.label)?.name}</div>
+          {rec.label === 'none'
+            ? <div className="lab-rec-big">{rec.left}s</div>
+            : <div className="lab-rec-big">{rec.phase === 'ready' ? 'Get ready' : rec.phase === 'now' ? 'NOW' : `${rec.rep} / ${rec.reps}`}</div>}
+          <div className="cal-hint">{rec.label === 'none' ? 'Talk with your hands, scratch, rest. No gestures.' : GESTURES.find((g) => g.id === rec.label)?.how}</div>
+        </div>
+      )}
+
+      <div className="lab-grid">
+        {GESTURES.map((g) => (
+          <div key={g.id} className="lab-card">
+            <div className="cal-step-title">{g.name}</div>
+            <div className="cal-step-ins">{g.how}. On each spoken "now".</div>
+            <div className="lab-count">{lab.counts[g.id] ?? 0} recording(s) · {rpt?.samples?.[g.id] ?? 0} reps used</div>
+            <button className="btn" disabled={busy || lab.live} onClick={() => send({ cmd: 'lab_record', label: g.id, reps: 10 })}>Record 10 reps</button>
+          </div>
+        ))}
+        <div className="lab-card">
+          <div className="cal-step-title">Normal movement</div>
+          <div className="cal-step-ins">30 s of talking with your hands, scratching, resting. Teaches it what is NOT a gesture.</div>
+          <div className="lab-count">{lab.counts['none'] ?? 0} recording(s) · {rpt?.samples?.['none'] ?? 0} windows used</div>
+          <button className="btn" disabled={busy || lab.live} onClick={() => send({ cmd: 'lab_record', label: 'none', reps: 30 })}>Record 30 s</button>
+        </div>
+        <div className="lab-card">
+          <div className="cal-step-title">Train</div>
+          {rpt?.training ? <div className="cal-step-ins">Training…</div>
+            : rpt?.error ? <div className="cal-error">{rpt.error}</div>
+            : rpt?.accuracy != null ? (
+              <div className="lab-report">
+                <div className="lab-acc">{Math.round(rpt.accuracy * 100)}% correct</div>
+                {Object.entries(rpt.per_label ?? {}).map(([k, v]) => (
+                  <div key={k} className={`cal-row ${k !== 'none' && v.recall < 0.9 ? 'bad' : 'ok'}`}>
+                    <span>{k.replace('_', ' ')}</span><b>{Math.round(v.recall * 100)}% found · {v.false_alarms} false</b>
+                  </div>
+                ))}
+              </div>
+            ) : <div className="cal-step-ins">Each rep is tested by a model trained without it.</div>}
+          <button className="btn primary" disabled={busy || lab.live} onClick={() => send({ cmd: 'lab_train' })}>Train</button>
+        </div>
+      </div>
+
+      <div className="lab-live">
+        <button className={`btn ${lab.live ? 'danger' : 'primary'}`} disabled={busy} onClick={() => send({ cmd: 'lab_live', on: !lab.live })}>
+          {lab.live ? 'Stop live test' : 'Start live test'}
+        </button>
+        {lab.live && <button className="btn" onClick={() => send({ cmd: 'lab_reset_counts' })}>Reset counters</button>}
+        {lab.live && (
+          <div className="lab-counters">
+            {GESTURES.map((g) => (
+              <div key={g.id} className={`lab-counter ${flash === g.id ? 'hit' : ''}`}>
+                <div className="lab-counter-n">{lab.detections[g.id] ?? 0}</div>
+                <div className="lab-counter-k">{g.name}</div>
+              </div>
+            ))}
+            <div className="cal-hint">Do each gesture 10 times, then move normally for a while. Counters should read 10 / 10 and not climb on their own.</div>
+          </div>
+        )}
+      </div>
+    </section>
   )
 }
