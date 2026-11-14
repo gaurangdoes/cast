@@ -154,7 +154,7 @@ class Cast:
         else:
             pose = self.poses.feed(m.ax, m.ay, m.az)
         if self.gest is not None:
-            hit = self.gest.feed(m.t, m.ax, m.ay, m.az)
+            hit = self.gest.feed(m.t, m.ax, m.ay, m.az, m.gx, m.gy, m.gz) if m.gx is not None else None
             if hit:
                 self.pool.submit(self.on_gesture, *hit)
         if pose != self.last_pose_sent or now - self.last_motion_push > 0.5:
@@ -495,8 +495,8 @@ def main():
     band.on("audio", cast.on_audio)
     band.on("double-tap", cast.on_double_tap)
     band.on("tap", cast.on_tap)
-    if cast.fast:        # 416 accelerometer readings a second: the most Bluetooth carries next to the mic
-        band.configure(motion=gestures.RATE, sensors="accel", events=True, audio=True, mic_level=True)
+    if cast.fast:        # 208 readings a second of both sensors: the most Bluetooth carries next to the mic
+        band.configure(motion=gestures.RATE, sensors="both", events=True, audio=True, mic_level=True)
     else:
         band.configure(motion=50, events=True, audio=True, mic_level=True)
     band.on("notice", lambda n: print("[band notice]", n if isinstance(n, dict) else getattr(n, "__dict__", n), "| streams now:", band.streams))

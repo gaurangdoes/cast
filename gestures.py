@@ -19,10 +19,11 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data" / "gestures"
 MODEL = DATA / "model.pkl"
-RATE = 416
+RATE = 208                             # accelerometer + gyroscope together, the most Bluetooth carries next to the mic
 PRE_S, POST_S = 0.35, 0.85            # window around an activity peak
-HP_K = 9                               # moving-average length for the high-pass (~22 ms)
-LP_K = 41                              # ~0.1 s smoothing for orientation
+HP_K = 5                               # moving-average length for the high-pass (~24 ms)
+LP_K = 21                              # ~0.1 s smoothing for orientation
+SHIFTS = (-16, -8, 0, 8, 16)           # each rep is also used shifted by up to 77 ms
 
 
 def _movavg(x, k):
@@ -30,8 +31,10 @@ def _movavg(x, k):
     return np.stack([np.convolve(x[:, i], kernel, mode="same") for i in range(x.shape[1])], axis=1)
 
 
-def activity(acc):
-    """Per-sample activity: fast vibration energy + orientation change speed (both in g-ish)."""
+def activity(x):
+    """Per-sample activity: fast vibration + orientation change + rotation speed.
+    x: (n, 3) accelerometer in g, or (n, 6) with gyroscope in degrees/second."""
+    acc = x[:, :3]
     lp = _movavg(acc, LP_K)
     hp = np.linalg.norm(acc - _movavg(acc, HP_K), axis=1)
     vib = np.sqrt(_movavg((hp ** 2)[:, None], HP_K * 3)[:, 0])
@@ -39,16 +42,29 @@ def activity(acc):
     step = int(0.1 * RATE)
     if len(lp) > step:
         turn[step:] = np.linalg.norm(lp[step:] - lp[:-step], axis=1)
-    return vib * 8.0 + turn                 # vibration is small in g; weight it up
+    out = vib * 8.0 + turn                  # vibration is small in g; weight it up
+    if x.shape[1] >= 6:
+        out = out + np.linalg.norm(_movavg(x[:, 3:6], HP_K), axis=1) / 150.0
+    return out
 
 
 def _unit(v):
     return v / (np.linalg.norm(v) or 1.0)
 
 
-def features(acc):
-    """acc: (n, 3) window in g at ~RATE. Returns a 1-D feature vector."""
+def features(x):
+    """x: (n, 6) window at ~RATE: accelerometer (g) and gyroscope (degrees/second)."""
+    acc, gyr = x[:, :3], x[:, 3:6]
     n = len(acc)
+    dt = 1.0 / RATE
+    half = n // 2
+    gmag = np.linalg.norm(gyr, axis=1)
+    gyro_feats = np.concatenate([
+        gyr.mean(0) / 100, gyr.std(0) / 100, np.abs(gyr).max(0) / 100,
+        gyr.sum(0) * dt / 90,                                # net rotation per axis, in quarter turns
+        gyr[:half].sum(0) * dt / 90, gyr[half:].sum(0) * dt / 90,   # rotated out, then back?
+        [gmag.max() / 100, gmag.mean() / 100, float(np.argmax(gmag)) / n],
+    ])
     lp = _movavg(acc, LP_K)
     edge = max(4, int(0.12 * RATE))
     g0, g1 = _unit(lp[:edge].mean(0)), _unit(lp[-edge:].mean(0))
@@ -62,7 +78,7 @@ def features(acc):
     freqs = np.fft.rfftfreq(n, 1.0 / RATE)
     bands = [spec[(freqs >= a) & (freqs < b)].sum() for a, b in ((8, 30), (30, 70), (70, 200))]
     tot = sum(bands) or 1.0
-    act = activity(acc)[LP_K:-LP_K]          # skip the window edges (smoothing artefacts)
+    act = activity(x)[LP_K:-LP_K]            # skip the window edges (smoothing artefacts)
     above = float((act > 0.5 * act.max()).mean()) if len(act) and act.max() > 0 else 0.0
     # No absolute orientation here on purpose: with it the model learned "the arm position I
     # recorded in" instead of the gesture, and fired every second in that position.
@@ -73,6 +89,7 @@ def features(acc):
         [hpm.mean() * 1000, np.percentile(hpm, 95) * 1000, hpm.max() * 1000],   # vibration (mg)
         [b / tot for b in bands], [np.log1p(tot)],
         [pk / n, above, act.max() if len(act) else 0.0],
+        gyro_feats,
     ])
 
 
@@ -117,32 +134,38 @@ class Recordings:
 
     @staticmethod
     def dataset():
-        X, y = [], []
+        """Returns X, y, groups. Every shifted copy of one rep shares a group, so a test never
+        sees a copy of a rep it trained on."""
+        X, y, groups = [], [], []
+        pre, post = int(PRE_S * RATE), int(POST_S * RATE)
+        gid = 0
         for f in sorted(DATA.glob("*.npz")):
             label = f.stem.rsplit("_", 1)[0]
-            d = np.load(f)
-            if len(d["t"]) < RATE:
+            if label.startswith("pose_"):
                 continue
-            if label == "none" or label.startswith("pose_"):
-                # everything that is not a gesture: a window every 0.3 s of normal movement
-                # and of the held poses (389 examples from the first real session)
-                label = "none"
-                pre, post = int(PRE_S * RATE), int(POST_S * RATE)
-                wins = [(q, d["acc"][q - pre:q + post]) for q in range(pre, len(d["acc"]) - post, int(0.3 * RATE))]
-            else:
-                wins = peak_windows(d["t"], d["acc"], cue_times=list(d["cues"]))
-                # the quiet moment before each cue, same arm position, is NOT the gesture
-                tt = (d["t"] - d["t"][0]) / 1000.0
-                pre, post = int(PRE_S * RATE), int(POST_S * RATE)
-                for c in d["cues"]:
-                    q = int(np.searchsorted(tt, c - 0.95))
-                    if q - pre >= 0 and q + post <= len(tt):
-                        X.append(features(d["acc"][q - pre:q + post]))
-                        y.append("none")
-            for _, w in wins:
-                X.append(features(w))
-                y.append(label)
-        return np.array(X), np.array(y)
+            d = np.load(f)
+            a = d["acc"]
+            if a.ndim != 2 or a.shape[1] < 6 or len(a) < RATE:
+                continue                                  # older accelerometer-only recording
+            if label == "none":
+                for q in range(pre, len(a) - post, int(0.3 * RATE)):
+                    X.append(features(a[q - pre:q + post])); y.append("none"); groups.append(gid)
+                    gid += q % 7 == 0                     # a new group every few windows
+                gid += 1
+                continue
+            tt = (d["t"] - d["t"][0]) / 1000.0
+            for c in d["cues"]:                           # quiet moment before each cue: not the gesture
+                q = int(np.searchsorted(tt, c - 0.95))
+                if q - pre >= 0 and q + post <= len(a):
+                    X.append(features(a[q - pre:q + post])); y.append("none"); groups.append(gid)
+            gid += 1
+            for p, _ in peak_windows(d["t"], a, cue_times=list(d["cues"])):
+                for sh in SHIFTS:
+                    q = p + sh
+                    if q - pre >= 0 and q + post <= len(a):
+                        X.append(features(a[q - pre:q + post])); y.append(label); groups.append(gid)
+                gid += 1
+        return np.array(X), np.array(y), np.array(groups)
 
     @staticmethod
     def counts():
@@ -155,17 +178,16 @@ class Recordings:
 
 def train():
     from sklearn.ensemble import RandomForestClassifier
-    from sklearn.model_selection import cross_val_predict, StratifiedKFold
+    from sklearn.model_selection import cross_val_predict, StratifiedGroupKFold
     import pickle
-    X, y = Recordings.dataset()
+    X, y, groups = Recordings.dataset()
     labels, counts = np.unique(y, return_counts=True) if len(y) else ([], [])
-    report = {"samples": {str(l): int(c) for l, c in zip(labels, counts)}}
-    if len(labels) < 2 or min(counts) < 3:
-        report["error"] = "Need at least 3 examples of each gesture and some normal movement."
+    report = {"samples": {str(l): int(c) // (len(SHIFTS) if l != "none" else 1) for l, c in zip(labels, counts)}}
+    if len(labels) < 2 or "none" not in labels or min(counts) < 3 * len(SHIFTS):
+        report["error"] = "Need at least 3 reps of a gesture and a normal-movement recording (made with this version)."
         return report
-    clf = RandomForestClassifier(n_estimators=300, min_samples_leaf=1, class_weight="balanced", random_state=0)
-    folds = min(5, int(min(counts)))
-    pred = cross_val_predict(clf, X, y, cv=StratifiedKFold(folds, shuffle=True, random_state=0))
+    clf = RandomForestClassifier(n_estimators=300, class_weight="balanced", random_state=0)
+    pred = cross_val_predict(clf, X, y, cv=StratifiedGroupKFold(5), groups=groups)
     report["accuracy"] = round(float((pred == y).mean()), 3)
     report["per_label"] = {}
     for l in labels:
@@ -199,20 +221,22 @@ class LiveDetector:
             if label == "none" or label.startswith("pose_"):
                 continue
             d = np.load(f)
+            if d["acc"].ndim != 2 or d["acc"].shape[1] < 6:
+                continue
             act = activity(d["acc"])            # on the whole recording: no edge effects
             for p, _ in peak_windows(d["t"], d["acc"], cue_times=list(d["cues"])):
                 peaks.append(act[p])
         return 0.5 * float(np.percentile(peaks, 10)) if peaks else 0.05
 
-    def feed(self, t_ms, ax, ay, az):
-        self.buf.append((t_ms, ax, ay, az))
+    def feed(self, t_ms, ax, ay, az, gx, gy, gz):
+        self.buf.append((t_ms, ax, ay, az, gx, gy, gz))
         if len(self.buf) > RATE * 4:
             del self.buf[: len(self.buf) - RATE * 4]
         now = t_ms / 1000.0                    # band clock: works the same live or replayed
         if now - self.last_check < 0.1 or now - self.last_fire < self.refractory or len(self.buf) < RATE * 2:
             return None
         self.last_check = now
-        a = np.array(self.buf)[:, 1:4]
+        a = np.array(self.buf)[:, 1:7]
         act = activity(a)
         pre, post = int(PRE_S * RATE), int(POST_S * RATE)
         # the candidate peak must be far enough back that its whole window has arrived
@@ -253,7 +277,7 @@ def pose_dataset():
     win = int(POSE_WIN_S * RATE)
     for f in sorted(DATA.glob("pose_*.npz")):
         label = f.stem.rsplit("_", 1)[0][len("pose_"):]
-        acc = np.load(f)["acc"]
+        acc = np.load(f)["acc"][:, :3]
         acc = acc[int(1.0 * RATE):]                     # skip the first second (getting into position)
         for i in range(0, len(acc) - win, win // 2):     # 50% overlap
             X.append(pose_features(acc[i:i + win]))

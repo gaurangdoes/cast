@@ -113,13 +113,13 @@ class Calib:
         threading.Thread(target=self._lab_record, args=(label, reps), daemon=True).start()
 
     def _lab_record(self, label, reps):
-        name = {"fist": "close and open your fist", "thumbs_up": "thumbs up, then back",
+        name = {"fist": "clench your fist twice, quickly", "thumbs_up": "thumbs up, then back",
                 "none": "move normally"}.get(label, label)
         pose_say = {"pose_raised": "Hold your wrist up near your mouth, like talking into it",
                     "pose_rest": "Rest your arm on the table or your lap",
                     "pose_side": "Let your arm hang at your side",
                     "pose_point": "Point your arm at someone, palm down"}
-        self.band.configure(motion=gestures.RATE, sensors="accel")
+        self.band.configure(motion=gestures.RATE, sensors="both")
         self.lab_buf = []
         cues = []
         try:
@@ -138,8 +138,8 @@ class Calib:
             else:
                 self.lab["recording"] = {"label": label, "rep": 0, "reps": reps, "phase": "ready"}
                 self.push_state()
-                self.say("Get ready. When I say now, %s." % name)
-                time.sleep(3.5)
+                self.say("Get ready. When I say now, %s. Move your arm to a new position every few reps." % name)
+                time.sleep(6.5)
                 for i in range(reps):
                     self.lab["recording"] = {"label": label, "rep": i + 1, "reps": reps, "phase": "now"}
                     self.push_state()
@@ -154,7 +154,7 @@ class Calib:
             buf = self.lab_buf
             if buf and len(buf) > gestures.RATE:
                 a = np.array(buf)
-                gestures.Recordings.save(label, a[:, 0], a[:, 1:4], cues)
+                gestures.Recordings.save(label, a[:, 0], a[:, 1:7], cues)
         finally:
             self.lab_buf = None
             self.lab["recording"] = None
@@ -186,7 +186,7 @@ class Calib:
                 self.lab["report"] = dict(self.lab.get("report") or {}, error="Train first (%s)" % e)
                 self.push_state()
                 return
-            self.band.configure(motion=gestures.RATE, sensors="accel")
+            self.band.configure(motion=gestures.RATE, sensors="both")
             self.lab.update(live=True, detections={}, last=None)
         else:
             self.lab["live"] = False
@@ -221,8 +221,8 @@ class Calib:
         self.push_state()
 
     def on_motion(self, m):
-        if self.lab_buf is not None:
-            self.lab_buf.append((m.t, m.ax, m.ay, m.az))
+        if self.lab_buf is not None and m.gx is not None:
+            self.lab_buf.append((m.t, m.ax, m.ay, m.az, m.gx, m.gy, m.gz))
         if getattr(self, "posemodel", None) is not None:
             before = self.lab.get("pose")
             pose = self.posemodel.feed(m.t, m.ax, m.ay, m.az)
@@ -231,7 +231,7 @@ class Calib:
             if pose != before:
                 self.push_state()
         if self.detector is not None:
-            hit = self.detector.feed(m.t, m.ax, m.ay, m.az)
+            hit = self.detector.feed(m.t, m.ax, m.ay, m.az, m.gx, m.gy, m.gz) if m.gx is not None else None
             if hit:
                 label, prob = hit
                 self.lab["detections"][label] = self.lab["detections"].get(label, 0) + 1

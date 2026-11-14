@@ -225,7 +225,7 @@ const POSES: { id: string; name: string; how: string }[] = [
 ]
 
 const GESTURES: { id: string; name: string; how: string }[] = [
-  { id: 'fist', name: 'Fist', how: 'Close your fist hard, then open it' },
+  { id: 'fist', name: 'Fist', how: 'Clench your fist twice, quickly (squeeze-squeeze)' },
   { id: 'thumbs_up', name: 'Thumbs up', how: 'Thumbs up, then bring your hand back' },
 ]
 
@@ -268,21 +268,21 @@ function GestureLab({ lab, send, live }: { lab: Lab; send: (c: object) => void; 
           </div>
         ))}
       </div>
-      <div className="cal-sub">Gestures: 10 reps each, on every spoken "now"</div>
+      <div className="cal-sub">Gestures: 15 reps per recording, on every spoken "now". Record each twice, moving your arm to a new position every few reps</div>
       <div className="lab-grid">
         {GESTURES.map((g) => (
           <div key={g.id} className="lab-card">
             <div className="cal-step-title">{g.name}</div>
             <div className="cal-step-ins">{g.how}. On each spoken "now".</div>
             <div className="lab-count">{lab.counts[g.id] ?? 0} recording(s) · {rpt?.samples?.[g.id] ?? 0} reps used</div>
-            <button className="btn" disabled={busy || lab.live} onClick={() => send({ cmd: 'lab_record', label: g.id, reps: 10 })}>Record 10 reps</button>
+            <button className="btn" disabled={busy || lab.live} onClick={() => send({ cmd: 'lab_record', label: g.id, reps: 15 })}>Record 15 reps</button>
           </div>
         ))}
         <div className="lab-card">
           <div className="cal-step-title">Normal movement</div>
           <div className="cal-step-ins">30 s of talking with your hands, scratching, resting. Teaches it what is NOT a gesture.</div>
           <div className="lab-count">{lab.counts['none'] ?? 0} recording(s) · {rpt?.samples?.['none'] ?? 0} windows used</div>
-          <button className="btn" disabled={busy || lab.live} onClick={() => send({ cmd: 'lab_record', label: 'none', reps: 30 })}>Record 30 s</button>
+          <button className="btn" disabled={busy || lab.live} onClick={() => send({ cmd: 'lab_record', label: 'none', reps: 60 })}>Record 60 s</button>
         </div>
         <div className="lab-card">
           <div className="cal-step-title">Train</div>
