@@ -222,7 +222,6 @@ const POSES: { id: string; name: string; how: string }[] = [
   { id: 'raised', name: 'Wrist raised', how: 'Band up near your mouth, like talking into it' },
   { id: 'rest', name: 'Resting', how: 'Arm on the table or your lap' },
   { id: 'side', name: 'At your side', how: 'Arm hanging down, standing or sitting' },
-  { id: 'point', name: 'Pointing', how: 'Arm out toward someone, palm down' },
 ]
 
 const GESTURES: { id: string; name: string; how: string }[] = [
