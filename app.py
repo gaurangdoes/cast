@@ -47,8 +47,10 @@ HTTP_PORT = 8000
 WS_PORT = 8765
 WEARER_MIN = 0.6
 REFUSE_BELOW = 0.35     # only refuse when fairly sure it's someone else
-COMMAND_SETTLE_S = 1.2  # wait this long after the last raised-wrist words before acting
+COMMAND_SETTLE_S = 1.8  # wait this long after the last raised-wrist words before acting
 CLIP_SECONDS = 30
+SOFT_DB = 18            # the wearer's recognised voice at this level: a command if it is actionable
+NEAR_DB = 21            # wrist raised and the wearer's voice: softer speech still counts
 RAISED_DB = 14          # at or below this loudness someone is talking into the band
 NAME_HINT = re.compile(r"\b(hey|hi|hello|yo|thanks|thank you|i'm|i am|this is|my name)\b", re.I)
 CONTEXT_S = 6.0          # seconds of earlier audio given to Nemotron with each sentence
@@ -285,14 +287,22 @@ class Cast:
             return                                   # that was Cast's own voice
         pose = self.poses.pose_during(start, end)
         rms = self.loud.level_during(start, end)
-        # Talking into the band is what makes a command, and loudness at the band is the proof
-        # (calibrated: 12 dB at the mouth, 21 dB resting, 27 dB for someone else).
-        raised = rms is not None and rms <= RAISED_DB
-        if raised:
+        vid, sim = run["voice"], run["sim"]
+        # Who is being talked to? Three signals, measured on this band: loudness at the mic
+        # (12 dB at the mouth, 21 resting, 27 someone else), the wrist pose, and whose voice it is.
+        mine = vid == self.voices.wearer_id or vid < 0           # the wearer, or undecided
+        loud = rms is not None and rms <= RAISED_DB                 # anyone speaking right into the band
+        near = rms is not None and rms <= NEAR_DB and pose == "mouth" and mine   # softer, wrist raised
+        with self.cmd_lock:
+            ongoing = self.pending_cmd is not None and mine         # still finishing a slow command
+        # the wearer's own voice, fairly loud, but the pose is not clearly raised: treat it as a
+        # command only if it turns out to be something Cast can do (decided after Gemini reads it)
+        soft = (not loud and not near and not ongoing and vid == self.voices.wearer_id
+                and rms is not None and rms <= SOFT_DB)
+        if loud or near or ongoing or soft:
             pose = "mouth"
         elif pose == "mouth":
-            pose = "rest_table"                      # pose says raised but nobody spoke into it
-        vid, sim = run["voice"], run["sim"]
+            pose = "rest_table"                      # wrist up, but not talking to the band
         score = self.wearer_score(vid, rms, pose)
         mode = MODE_OF_POSE.get(pose, "ambient")
         is_wearer = vid == self.voices.wearer_id
@@ -314,7 +324,7 @@ class Cast:
         if mode in ("command", "ask"):
             with self.cmd_lock:                      # collect until the speaker pauses
                 if self.pending_cmd is None:
-                    self.pending_cmd = {"texts": [], "scores": [], "entry": entry, "other": []}
+                    self.pending_cmd = {"texts": [], "scores": [], "entry": entry, "other": [], "soft": soft}
                 self.pending_cmd["texts"].append(entry["text"])
                 self.pending_cmd["scores"].append(score)
                 # a recognised voice that is not the wearer's
@@ -338,7 +348,7 @@ class Cast:
             if len(text.split()) < 3:
                 print("[command] ignored fragment:", text)
                 continue
-            entry = dict(p["entry"], text=text, wearer=score)
+            entry = dict(p["entry"], text=text, wearer=score, soft=p.get("soft", False))
             if p["other"] and all(p["other"]):       # every part was someone else's voice
                 self.card(uuid.uuid4().hex[:8], "refused", "command", text,
                           reason="Not the wearer's voice (score %.2f)" % score)
@@ -418,7 +428,8 @@ class Cast:
 
     def act(self, mode, entry):
         aid = uuid.uuid4().hex[:8]
-        self.card(aid, "working", mode, entry["text"], result="Thinking...")
+        if not entry.get("soft"):
+            self.card(aid, "working", mode, entry["text"], result="Thinking...")
         self.pool.submit(self._act, mode, entry, aid)
 
     def _act(self, mode, entry, aid):
@@ -426,6 +437,9 @@ class Cast:
             if mode == "command":
                 out = brain.interpret_command(entry["text"])
                 intent = out.get("intent")
+                if entry.get("soft") and intent not in ("reminder", "question", "label_speaker", "cancel_reminder"):
+                    print("[command] soft, not actionable, ignored:", entry["text"])
+                    return
                 if intent == "reminder":
                     r = self.scheduler.add(out.get("task"), out["remind_at_epoch"], out.get("say"))
                     say = out.get("say") or "Okay, I'll remind you %s." % spoken_time(r["remind_at"])
