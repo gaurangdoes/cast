@@ -229,6 +229,8 @@ class Cast:
         self.last_partial = 0.0
         self.cmd_lock = threading.Lock()
         threading.Thread(target=self._command_loop, daemon=True).start()
+        self.seg_q = queue.Queue()
+        threading.Thread(target=self._segment_loop, daemon=True).start()
         screen.on_message = self.on_screen_message
         screen.snapshot = lambda: [self.reminders_msg(), self.names_msg(), json.dumps({"kind": "mic", "t": time.time(), "on": not self.paused})]
 
@@ -296,15 +298,29 @@ class Cast:
         self.screen.send("partial", text=text)
 
     def on_segment(self, words):
-        """A finished stretch of speech from Deepgram. Nemotron splits it into turns (who spoke
-        when, even mid-sentence); each turn's voiceprint gives it a stable speaker id."""
+        """A finished stretch of speech from Deepgram. This runs on Deepgram's reader thread, so
+        it only hands the words over: working out who spoke takes tens to hundreds of
+        milliseconds per line, and doing it here would make the transcript fall behind."""
+        self.seg_q.put(words)
+        waiting = self.seg_q.qsize()
+        if waiting >= 8 and waiting % 8 == 0:
+            print("[segment] %d lines waiting to be labelled" % waiting)
+
+    def _segment_loop(self):
+        """One worker labels lines in the order they were said (the turn logic depends on order)."""
+        while True:
+            self.process_segment(self.seg_q.get())
+
+    def process_segment(self, words):
+        """Nemotron splits the words into turns (who spoke when, even mid-sentence); each turn's
+        voiceprint gives it a stable speaker id."""
         try:
             t0 = self.audio_t0 or time.time()
             if self.voice.speaking(t0 + words[0]["start"], t0 + words[-1]["end"]):
                 return                               # Cast's own spoken reply
             for run in self.split_by_speaker(words):
                 self.handle_run(run)
-        except Exception:  # noqa: BLE001 - this runs on Deepgram's reader thread: an error here must be seen, and must not stop it
+        except Exception:  # noqa: BLE001 - an error here must be seen, and must not stop the worker
             import traceback
             print("[segment] failed:")
             traceback.print_exc()

@@ -50,7 +50,8 @@ class PoseTracker:
         self.g = None
         self.candidate, self.candidate_since = "moving", 0.0
         self.pose = "moving"
-        self.history = deque(maxlen=6000)        # (wall time, stable pose), ~2 min at 50/s
+        self.history = deque(maxlen=6000)        # (wall time, stable pose), 20 a second: 5 minutes
+        self._last_hist = 0.0
         self.ghist = deque(maxlen=2400)          # (wall time, gravity direction), 20 a second: 2 minutes
         self._last_g = 0.0
         self.last_angle = None
@@ -76,7 +77,9 @@ class PoseTracker:
             self.candidate, self.candidate_since = label, now
         if now - self.candidate_since >= HOLD_S:
             self.pose = self.candidate
-        self.history.append((now, self.pose))
+        if now - self._last_hist >= 0.05:
+            self._last_hist = now
+            self.history.append((now, self.pose))
         if now - self._last_g >= 0.05:
             self._last_g = now
             self.ghist.append((now, tuple(self.g)))
