@@ -207,7 +207,10 @@ class Cast:
         self.voices_path = ROOT / "data" / "voices.npz"
         self.lab_dir = ROOT / "data" / "voices_lab"
         if self.voices.enroll_folder(self.lab_dir):
-            print("Enrolled voices: you + %s" % ", ".join(self.voices.names.values()))
+            self.learned_path = ROOT / "data" / "voices_learned.pkl"
+            n = 0 if os.environ.get("CAST_FRESH") == "1" else self.voices.load_learned(self.learned_path)
+            print("Enrolled voices: you + %s%s" % (", ".join(self.voices.names.values()),
+                                                  " (+%d examples learned earlier)" % n if n else ""))
         elif os.environ.get("CAST_FRESH") != "1" and self.voices.load(self.voices_path):
             print("Remembered %d voices from last time%s." % (
                 len(self.voices.speakers), ", including the wearer" if self.voices.wearer_id is not None else ""))
@@ -392,6 +395,13 @@ class Cast:
         # command only if it turns out to be something Cast can do (decided after Gemini reads it)
         soft = (not loud and not near and not ongoing and vid == self.voices.wearer_id
                 and rms is not None and rms <= SOFT_DB)
+        if (rms is not None and rms <= RAISED_DB - 2 and vid == self.voices.wearer_id and end - start >= 1.0
+                and hasattr(self.poses, "adapt")):
+            # the wearer, this loud: the band is at the mouth for certain. Let the "raised" pose
+            # follow where the wrist really was, so a shifted band corrects itself.
+            moved = self.poses.adapt("mouth", start, end)
+            if moved is not None and moved > 8:
+                print("[pose] raised-wrist reference moved %.0f degrees toward how you hold it now" % moved)
         if loud or near or ongoing or soft:
             pose = "mouth"
         elif pose == "mouth":
@@ -561,6 +571,8 @@ class Cast:
             try:
                 if not self.voices.enrolled:
                     self.voices.save(self.voices_path)
+                else:
+                    self.voices.save_learned(self.learned_path)
             except Exception as e:  # noqa: BLE001
                 print("[voices] save failed:", e)
 

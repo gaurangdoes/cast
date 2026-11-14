@@ -51,6 +51,8 @@ class PoseTracker:
         self.candidate, self.candidate_since = "moving", 0.0
         self.pose = "moving"
         self.history = deque(maxlen=6000)        # (wall time, stable pose), ~2 min at 50/s
+        self.ghist = deque(maxlen=2400)          # (wall time, gravity direction), 20 a second: 2 minutes
+        self._last_g = 0.0
         self.last_angle = None
 
     @property
@@ -75,7 +77,32 @@ class PoseTracker:
         if now - self.candidate_since >= HOLD_S:
             self.pose = self.candidate
         self.history.append((now, self.pose))
+        if now - self._last_g >= 0.05:
+            self._last_g = now
+            self.ghist.append((now, tuple(self.g)))
         return self.pose
+
+    def adapt(self, name, t_start, t_end, weight=0.3):
+        """Nudge a pose's reference toward how the wrist was actually held between two times.
+        Called when something else proves the pose (speech loud enough that the band must be at
+        the mouth), so the poses follow the band if it shifts on the wrist."""
+        gs = [g for t, g in self.ghist if t_start <= t <= t_end]
+        if name not in self.refs or len(gs) < 10:
+            return None
+        mean = [sum(g[i] for g in gs) / len(gs) for i in range(3)]
+        spread = max(max(abs(g[i] - mean[i]) for g in gs) for i in range(3))
+        if spread > 0.35:                          # the arm was moving: not a clean example
+            return None
+        new = _unit(mean)
+        moved = _angle(self.refs[name], new)
+        self.refs[name] = _unit([(1 - weight) * a + weight * b for a, b in zip(self.refs[name], new)])
+        try:                                       # keep it for the next start
+            cal = json.loads(CALIBRATION.read_text())
+            cal["poses"][name]["gravity"] = [round(x, 3) for x in self.refs[name]]
+            CALIBRATION.write_text(json.dumps(cal, indent=2))
+        except Exception:  # noqa: BLE001
+            pass
+        return moved
 
     def pose_during(self, t_start, t_end):
         """Most common stable pose between two wall-clock times (falls back to now)."""

@@ -113,7 +113,42 @@ class Voices:
         self.plain = {i: [[self._unit(ex[m]) for m in range(n_models)] for ex in exs] for i, exs in raw.items()}
         self.wearer_id = 0
         self.labels = labels
+        self.base_counts = {i: len(exs) for i, exs in self.enrolled.items()}
         return True
+
+    # ---- what was learned while running (corrections, new people, clear long clips)
+
+    def save_learned(self, path):
+        import pickle
+        if not self.enrolled:
+            return
+        with self.lock:
+            data = {"labels": list(self.labels), "base": dict(self.base_counts),
+                    "extra": {i: (ex[self.base_counts.get(i, 0):], self.plain.get(i, [])[self.base_counts.get(i, 0):])
+                              for i, ex in self.enrolled.items()},
+                    "names": dict(self.names)}
+        tmp = str(path) + ".tmp"
+        Path(tmp).write_bytes(pickle.dumps(data))
+        os.replace(tmp, path)
+
+    def load_learned(self, path):
+        import pickle
+        try:
+            data = pickle.loads(Path(path).read_bytes())
+        except Exception:  # noqa: BLE001
+            return 0
+        if data.get("labels") != list(self.labels) or data.get("base") != dict(self.base_counts):
+            return 0                                  # the enrolment recordings changed: start clean
+        n = 0
+        with self.lock:
+            for i, (centred, plain) in data["extra"].items():
+                self.enrolled.setdefault(i, []).extend(centred)
+                self.plain.setdefault(i, []).extend(plain)
+                n += len(centred)
+            for i, name in data["names"].items():
+                if i in self.enrolled:
+                    self.names[i] = name
+        return n
 
     def teach(self, pcm16, vid=None, name=None):
         """The user said who a stretch of speech was. Keep it as an example of that voice
@@ -165,8 +200,9 @@ class Voices:
                          for i, exs in self.enrolled.items()), reverse=True)
         margin = scores[0][0] - scores[1][0]
         need = 0.20 if seconds >= 1.5 else 0.26       # commit only on a clear lead
-        if margin >= 0.30 and seconds >= 2.5 and len(self.enrolled[scores[0][1]]) < 10:
-            self.enrolled[scores[0][1]].append(e)      # a clear, long clip: one more example for today
+        if margin >= 0.30 and seconds >= 2.5 and len(self.enrolled[scores[0][1]]) < 14:
+            self.enrolled[scores[0][1]].append(e)      # a clear, long clip: one more example of this voice
+            self.plain.setdefault(scores[0][1], []).append([self._unit(v) for v in self.embed_all(pcm16)])
         return (scores[0][1] if margin >= need else UNKNOWN), margin
 
     def identify(self, pcm16):
