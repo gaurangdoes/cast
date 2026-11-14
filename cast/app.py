@@ -17,6 +17,7 @@ import asyncio
 import functools
 import http.server
 import json
+import math
 import os
 import queue
 import re
@@ -32,6 +33,7 @@ from .paths import ROOT  # noqa: E402  (also puts the kit on the import path)
 
 import websockets  # noqa: E402
 
+from . import addressee  # noqa: E402
 from . import commands as brain  # noqa: E402
 from .hearing import transcribe as ears  # noqa: E402
 from .hearing import diarize as nemotron  # noqa: E402
@@ -51,6 +53,7 @@ COMMAND_SETTLE_S = 1.8  # wait this long after the last raised-wrist words befor
 CLIP_SECONDS = 30
 NEW_PERSON_DB = 22      # a new voice must be quieter than this at the band (the wearer resting reads 21)
 COMMAND_MAX_S = 8.0     # a command stops collecting this long after its first words
+FIST_SWING_DEG = 20      # a fist counts only if the arm swung less than this just before it
 FAINT_DB = 24           # quieter than this and not a known voice: background chatter, dropped
 SOFT_DB = 18            # the wearer's recognised voice at this level: a command if it is actionable
 NEAR_DB = 21            # wrist raised and the wearer's voice: softer speech still counts
@@ -279,6 +282,13 @@ class Cast:
         self.decoder = PcmDecoder()
         self.last_voice = None
         self.last_run_end = None
+        self.arm = deque(maxlen=200)                 # (time, ax, ay, az) about 20 a second: was the arm steady?
+        # "was this said to Cast?": the trained model if there is one (python -m cast.addressee), else the rules
+        self.model_gate = os.environ.get("CAST_ADDRESSEE") != "rules" and addressee.available()
+        print("Command gate: %s" % ("trained model (data/addressee_model.pkl)" if self.model_gate
+                                    else "hand-written rules (no trained model yet)"
+                                    if os.environ.get("CAST_ADDRESSEE") != "rules" else "hand-written rules (CAST_ADDRESSEE=rules)"))
+        self.label_mode, self.label_until, self.label_session = None, 0.0, None   # a labelling session, if one is running
         self.turn = None                      # the stretch of continuous speech being labelled
         self.last_seq = None
         self.pending_cmd = None               # raised-wrist speech collected until the speaker pauses
@@ -288,12 +298,14 @@ class Cast:
         self.seg_q = queue.Queue()
         threading.Thread(target=self._segment_loop, daemon=True).start()
         screen.on_message = self.on_screen_message
-        screen.snapshot = lambda: [self.reminders_msg(), self.names_msg(), json.dumps({"kind": "mic", "t": time.time(), "on": not self.paused})]
+        screen.snapshot = lambda: [self.reminders_msg(), self.names_msg(), self.labelling_msg(), json.dumps({"kind": "mic", "t": time.time(), "on": not self.paused})]
 
     # ---- band events (run on the band's handler thread; keep short)
 
     def on_motion(self, m):
         now = time.time()
+        if not self.arm or now - self.arm[-1][0] >= 0.05:
+            self.arm.append((now, m.ax, m.ay, m.az))
         if isinstance(self.poses, LearnedPoses):
             pose = self.poses.feed(m.ax, m.ay, m.az, m.t, now)
         else:
@@ -464,6 +476,7 @@ class Cast:
         if self.voice.speaking(start, end):
             return                                   # that was Cast's own voice
         pose = self.poses.pose_during(start, end)
+        measured_pose, raised_angle = pose, self.poses.angle_to("mouth", start, end)
         rms = self.loud.level_during(start, end)
         if rms is not None:
             rms -= getattr(self, "db_shift", 0)      # as if the mic were at the gain we calibrated with
@@ -477,12 +490,39 @@ class Cast:
         near = rms is not None and rms <= NEAR_DB and pose == "mouth" and mine   # softer, wrist raised
         with self.cmd_lock:
             # still finishing a slow command: the wearer, or an undecided voice that is close to the band
-            ongoing = self.pending_cmd is not None and (
+            pending_now = self.pending_cmd is not None
+            ongoing = pending_now and (
                 mine or (vid < 0 and rms is not None and rms <= NEAR_DB))
         # the wearer's own voice, fairly loud, but the pose is not clearly raised: treat it as a
         # command only if it turns out to be something Cast can do (decided after Gemini reads it)
         soft = (not loud and not near and not ongoing and vid == self.voices.wearer_id
                 and rms is not None and rms <= SOFT_DB)
+        # What the gate knew when it decided, kept (without audio) so a model can be trained on it.
+        voice_kind = "wearer" if mine else ("other" if vid >= 0 and self.voices.wearer_id is not None else "unknown")
+        row = {"t": round(start, 2), "text": run["text"], "duration": round(end - start, 2),
+               "words": len(run["text"].split()), "rms_db": rms, "pose": measured_pose, "pose_angle": raised_angle,
+               "voice": voice_kind, "margin": round(float(sim or 0), 3), "pending": pending_now,
+               "since_cast": round(max(0.0, start - self.voice.busy_until), 1) if self.voice.busy_until else None,
+               "rule": {"loud": bool(loud), "near": bool(near), "soft": bool(soft), "ongoing": bool(ongoing),
+                        "to_cast": bool(loud or near or ongoing or soft)}}
+        prob = None
+        if self.model_gate and not loud:             # speech right at the band is always to Cast
+            try:
+                prob = addressee.predict(row)
+            except Exception as e:  # noqa: BLE001
+                print("[gate] model failed, using the rules:", e)
+            if prob is not None:
+                if voice_kind == "other":            # a recognised other person never commands Cast
+                    near = ongoing = soft = False
+                else:
+                    near, soft, ongoing = prob >= 0.75, 0.5 <= prob < 0.75, False
+        labelling = self.labelling()
+        row.update(prob=round(prob, 3) if prob is not None else None, session=self.label_session if labelling else None,
+                   label=(None if not labelling else 0 if labelling == "chat" else (1 if voice_kind != "other" else None)))
+        try:
+            addressee.log(row)
+        except Exception as e:  # noqa: BLE001
+            print("[gate] could not log:", e)
         if (rms is not None and rms <= RAISED_DB - 2 and vid == self.voices.wearer_id and end - start >= 1.0
                 and not isinstance(self.poses, LearnedPoses)):
             # the wearer, this loud: the band is at the mouth for certain. Let the "raised" pose
@@ -521,7 +561,7 @@ class Cast:
             self.pool.submit(self.check_heard, entry)
         print("[voice %s%s sim %.2f | %-10s | wearer %.2f | %s] %s" % (
             vid, "*" if entry["is_wearer"] else "", sim, pose, score, mode, run["text"]))
-        if to_cast:
+        if to_cast and not labelling:                # while examples are being collected, Cast does not act
             with self.cmd_lock:                      # collect until the speaker pauses
                 if self.pending_cmd is None:
                     self.pending_cmd = {"texts": [], "scores": [], "entry": entry, "other": [], "soft": True,
@@ -591,9 +631,47 @@ class Cast:
         self.screen.send("names", names={str(k): v for k, v in self.voices.names.items()})
         self.card(uuid.uuid4().hex[:8], "done", "command", "Learned a voice", result="Speaker %s is %s (%s)" % (vid, name, why))
 
+    # ---- labelling sessions: examples for the trained command gate
+
+    LABEL_SECONDS = {"cast": 90, "chat": 120}
+
+    def labelling(self):
+        """The running session's kind ("cast" or "chat"), or None."""
+        if self.label_mode and time.time() > self.label_until:
+            self.set_labelling("off")
+        return self.label_mode
+
+    def set_labelling(self, mode):
+        if mode in self.LABEL_SECONDS:
+            self.label_mode = mode
+            self.label_until = time.time() + self.LABEL_SECONDS[mode]
+            self.label_session = "%s-%d" % (mode, int(time.time()))
+            session = self.label_session
+            with self.cmd_lock:
+                self.pending_cmd = None              # nothing half-said carries into the session
+
+            def expire():
+                time.sleep(self.LABEL_SECONDS[mode] + 0.5)
+                if self.label_session == session and self.label_mode:
+                    self.set_labelling("off")
+            threading.Thread(target=expire, daemon=True).start()
+            print("[gate] labelling session %s for %d s" % (session, self.LABEL_SECONDS[mode]))
+        else:
+            if self.label_mode:
+                print("[gate] labelling session %s ended" % self.label_session)
+            self.label_mode, self.label_until = None, 0.0
+        self.screen.send("labelling", mode=self.label_mode, until=self.label_until if self.label_mode else None)
+
+    def labelling_msg(self):
+        on = self.label_mode and time.time() <= self.label_until
+        return json.dumps({"kind": "labelling", "t": time.time(), "mode": self.label_mode if on else None,
+                           "until": self.label_until if on else None})
+
     def on_screen_message(self, msg):
         """Typed on the screen: click a speaker's name and rename them."""
-        if msg.get("cmd") == "assign":
+        if msg.get("cmd") == "label":
+            self.set_labelling(str(msg.get("mode")))
+        elif msg.get("cmd") == "assign":
             self.pool.submit(self.assign, str(msg.get("seg")), msg.get("name"))
         elif msg.get("cmd") == "rename":
             try:
@@ -868,6 +946,23 @@ class Cast:
 
     # ---- gestures
 
+    def arm_swing(self, t0, t1):
+        """How far the direction of gravity swung between two times, in degrees: the largest angle
+        between any reading and the average. None when there are too few readings to say."""
+        vs = [(x, y, z) for t, x, y, z in list(self.arm) if t0 <= t <= t1]
+        if len(vs) < 4:
+            return None
+        mean = [sum(v[i] for v in vs) / len(vs) for i in range(3)]
+        mn = math.sqrt(sum(c * c for c in mean))
+        worst = 0.0
+        for v in vs:
+            n = math.sqrt(sum(c * c for c in v))
+            if n < 1e-6 or mn < 1e-6:
+                continue
+            cos = sum(a * b for a, b in zip(v, mean)) / (n * mn)
+            worst = max(worst, math.degrees(math.acos(max(-1.0, min(1.0, cos)))))
+        return worst
+
     def on_gesture(self, label, prob):
         if label != "fist":
             return                                # thumbs up is out of the demo: taps acknowledge
@@ -875,8 +970,9 @@ class Cast:
         self.screen.send("gesture", label=label, prob=prob)
         if label == "fist":
             now = time.time()                     # the window ended ~0.9 s ago; look just before it
-            if self.poses.pose_during(now - 1.9, now - 1.3) == "moving":
-                print("[gesture] fist ignored: arm was moving")
+            swing = self.arm_swing(now - 1.9, now - 1.3)
+            if swing is not None and swing > FIST_SWING_DEG:
+                print("[gesture] fist ignored: arm was moving (swung %.0f degrees)" % swing)
                 return
             self.toggle_pause()
         elif label == "thumbs_up":

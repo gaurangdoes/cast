@@ -85,6 +85,14 @@ class PoseTracker:
             self.ghist.append((now, tuple(self.g)))
         return self.pose
 
+    def angle_to(self, name, t_start, t_end):
+        """Degrees between a pose's reference and how the wrist was held between two times."""
+        ref = getattr(self, "refs", {}).get(name)
+        gs = [g for t, g in getattr(self, "ghist", ()) if t_start - 0.2 <= t <= t_end + 0.2]
+        if ref is None or not gs:
+            return None
+        return round(_angle(ref, _unit([sum(g[i] for g in gs) / len(gs) for i in range(3)])), 1)
+
     def adapt(self, name, t_start, t_end, weight=0.3):
         """Nudge a pose's reference toward how the wrist was actually held between two times.
         Called when something else proves the pose (speech loud enough that the band must be at

@@ -29,6 +29,7 @@ export type CastEvent =
   | { kind: 'names'; t: number; names: Record<string, string> }
   | { kind: 'relabel'; t: number; seg: string; speaker: number; is_wearer: boolean; name?: string | null }
   | { kind: 'ignored'; t: number; count: number }
+  | { kind: 'labelling'; t: number; mode: 'cast' | 'chat' | null; until: number | null }
   | { kind: 'mic'; t: number; on: boolean } | { kind: 'gesture'; t: number; label: string; prob: number }
 
 export interface Reminder extends TaskFields {

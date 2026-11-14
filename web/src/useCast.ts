@@ -24,11 +24,12 @@ export interface CastState {
   names: Record<string, string>
   gesture: { label: string; at: number } | null
   ignored: number
+  labelling: { mode: 'cast' | 'chat'; until: number } | null
 }
 
 const initial: CastState = {
   conn: 'connecting', pose: null, mode: 'ambient', angle: null, poseSeen: false, levelPct: 0,
-  wearer: null, lines: [], partial: '', cards: [], reminders: [], banner: null, micOn: true, names: {}, gesture: null, ignored: 0,
+  wearer: null, lines: [], partial: '', cards: [], reminders: [], banner: null, micOn: true, names: {}, gesture: null, ignored: 0, labelling: null,
 }
 
 type Action =
@@ -68,6 +69,8 @@ function applyEvent(s: CastState, m: CastEvent): CastState {
       return { ...s, names: m.names }
     case 'mic':
       return { ...s, micOn: m.on }
+    case 'labelling':
+      return { ...s, labelling: m.mode && m.until ? { mode: m.mode, until: m.until } : null }
     case 'ignored':
       return { ...s, ignored: Number(m.count) || 0 }
     case 'gesture':
@@ -164,5 +167,6 @@ export function useCast() {
   const dismissBanner = useCallback((key: number) => dispatch({ type: 'dismiss', key }), [])
   const rename = useCallback((speaker: number, name: string) => sendRef.current({ cmd: 'rename', speaker, name }), [])
   const assign = useCallback((seg: string, name: string) => sendRef.current({ cmd: 'assign', seg, name }), [])
-  return { state, dismissBanner, rename, assign }
+  const label = useCallback((mode: 'cast' | 'chat' | 'off') => sendRef.current({ cmd: 'label', mode }), [])
+  return { state, dismissBanner, rename, assign, label }
 }

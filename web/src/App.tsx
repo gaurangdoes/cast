@@ -62,7 +62,7 @@ function Icon({ name }: { name: string }) {
 /* ---------- app ---------- */
 
 export default function App() {
-  const { state, dismissBanner, rename, assign } = useCast()
+  const { state, dismissBanner, rename, assign, label } = useCast()
   const [details, toggleDetails] = useStoredFlag('cast.details')
   const raised = state.pose === 'mouth' || state.pose === 'ear' || state.mode === 'command' || state.mode === 'ask'
   return (
@@ -92,8 +92,10 @@ export default function App() {
             <span>The microphone is off. Double-tap or close your fist to resume.</span>
           </div>
         )}
+        {state.labelling && <LabellingBar session={state.labelling} onStop={() => label('off')} />}
         <main className="cols">
           <StatusPanel
+            labelling={state.labelling} onLabel={label}
             raised={raised} micOn={state.micOn} pose={state.pose} mode={state.mode} angle={state.angle}
             poseSeen={state.poseSeen} levelPct={state.levelPct} wearer={state.wearer} ignored={state.ignored} details={details}
           />
@@ -131,9 +133,26 @@ function ConnPill({ conn }: { conn: ConnState }) {
 
 /* ---------- left: status ---------- */
 
+function LabellingBar({ session, onStop }: { session: { mode: 'cast' | 'chat'; until: number }; onStop: () => void }) {
+  const [now, setNow] = useState(() => Date.now() / 1000)
+  useEffect(() => { const t = window.setInterval(() => setNow(Date.now() / 1000), 500); return () => window.clearInterval(t) }, [])
+  const left = Math.max(0, Math.ceil(session.until - now))
+  return (
+    <div className="labelling" role="status">
+      <b>{session.mode === 'cast' ? 'Recording examples: talk TO Cast' : 'Recording examples: ordinary conversation'}</b>
+      <span>{session.mode === 'cast'
+        ? 'Give commands and ask questions the way you normally would: at your mouth, softer, slower. Cast will not act.'
+        : 'Just talk, with your wrist up and down, gesturing. Nothing here is meant for Cast.'}</span>
+      <span className="labelling-left">{left}s</span>
+      <button type="button" className="btn" onClick={onStop}>Stop</button>
+    </div>
+  )
+}
+
 function StatusPanel(p: {
   raised: boolean; micOn: boolean; pose: Pose | null; mode: Mode; angle: number | null
   poseSeen: boolean; levelPct: number; wearer: number | null; ignored: number; details: boolean
+  labelling: { mode: 'cast' | 'chat'; until: number } | null; onLabel: (mode: 'cast' | 'chat' | 'off') => void
 }) {
   const state = !p.micOn ? 'off' : p.raised ? 'raised' : 'ambient'
   const title = state === 'off' ? 'Microphone off' : state === 'raised' ? 'Wrist raised' : 'Listening in the background'
@@ -157,6 +176,16 @@ function StatusPanel(p: {
           <dt>angle</dt><dd>{p.poseSeen && p.angle != null ? `${p.angle}°` : '–'}</dd>
           <dt>wearer</dt><dd>{p.wearer != null ? Number(p.wearer).toFixed(2) : '–'}</dd>
         </dl>
+      )}
+      {p.details && (
+        <div className="teach">
+          <h2>Teach the command gate</h2>
+          <p>Record examples, then run <code>python -m cast.addressee</code>. Cast does not act while recording.</p>
+          <div className="teach-buttons">
+            <button type="button" className="btn" disabled={!!p.labelling} onClick={() => p.onLabel('cast')}>To Cast · 90 s</button>
+            <button type="button" className="btn" disabled={!!p.labelling} onClick={() => p.onLabel('chat')}>Conversation · 120 s</button>
+          </div>
+        </div>
       )}
 
       <div className="howto">
