@@ -5,6 +5,7 @@ SpeechBrain's ECAPA speaker model (CPU). The resulting voiceprint is compared wi
 voices heard so far: close enough to one of them -> same person, otherwise a new speaker.
 Sentences spoken with the wrist raised and clearly loud teach Cast which voice is the wearer.
 """
+import json
 import threading
 
 import numpy as np
@@ -26,6 +27,7 @@ class Voices:
         self.wearer_id = None
         self.wearer_votes = {}
         self.aliases = {}         # merged speaker id -> surviving id
+        self.names = {}           # speaker id -> name ("Hardik"), learned from conversation
         self.next_id = 0
 
     def embed(self, pcm16):
@@ -74,6 +76,8 @@ class Voices:
                 a["n"] = min(a["n"] + b["n"], 20)
                 self.speakers.remove(b)
                 self.aliases[b["id"]] = a["id"]
+                if b["id"] in self.names and a["id"] not in self.names:
+                    self.names[a["id"]] = self.names.pop(b["id"])
                 if self.wearer_id == b["id"]:
                     self.wearer_id = a["id"]
                 return
@@ -82,6 +86,31 @@ class Voices:
         while speaker_id in self.aliases:
             speaker_id = self.aliases[speaker_id]
         return speaker_id
+
+    # ---- remembered between runs, so a restart does not forget who is who
+
+    def save(self, path):
+        with self.lock:
+            if not self.speakers:
+                return
+            np.savez(path, ids=[s["id"] for s in self.speakers], n=[s["n"] for s in self.speakers],
+                     centroids=np.stack([s["centroid"] for s in self.speakers]),
+                     meta=json.dumps({"wearer_id": self.wearer_id, "next_id": self.next_id,
+                                      "votes": {str(k): v for k, v in self.wearer_votes.items()},
+                                      "names": {str(k): v for k, v in self.names.items()}}))
+
+    def load(self, path):
+        try:
+            d = np.load(path)
+            meta = json.loads(str(d["meta"]))
+        except (OSError, ValueError, KeyError):
+            return False
+        with self.lock:
+            self.speakers = [{"id": int(i), "centroid": c, "n": int(n)} for i, c, n in zip(d["ids"], d["centroids"], d["n"])]
+            self.wearer_id, self.next_id = meta["wearer_id"], meta["next_id"]
+            self.wearer_votes = {int(k): v for k, v in meta["votes"].items()}
+            self.names = {int(k): v for k, v in meta["names"].items()}
+        return True
 
     def vote_wearer(self, speaker_id, yes):
         if speaker_id is None:

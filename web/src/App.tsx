@@ -25,7 +25,7 @@ export default function App() {
           conn={state.conn} pose={state.pose} mode={state.mode} angle={state.angle}
           poseSeen={state.poseSeen} levelPct={state.levelPct} wearer={state.wearer}
         />
-        <TranscriptPanel lines={state.lines} partial={state.partial} />
+        <TranscriptPanel lines={state.lines} partial={state.partial} names={state.names} />
         <section className="panel right">
           <RemindersPanel reminders={state.reminders} />
           <CardsPanel cards={state.cards} />
@@ -76,7 +76,7 @@ function WristPanel(p: {
   )
 }
 
-function TranscriptPanel({ lines, partial }: { lines: Line[]; partial: string }) {
+function TranscriptPanel({ lines, partial, names }: { lines: Line[]; partial: string; names: Record<string, string> }) {
   const ref = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
     const el = ref.current
@@ -88,7 +88,7 @@ function TranscriptPanel({ lines, partial }: { lines: Line[]; partial: string })
       <div ref={ref} className="transcript">
         {lines.length === 0 && <div className="empty">Waiting for speech…</div>}
         {lines.map((m) => {
-          const who = m.is_wearer ? `You` : `Speaker ${m.speaker}`
+          const who = m.is_wearer ? `You` : (names[String(m.speaker)] ?? `Speaker ${m.speaker}`)
           return (
             <div key={m.key} className={`line ${m.mode ?? ''}`}>
               <div className="who" style={{ color: spkColor(m.speaker) }}>{who}</div>

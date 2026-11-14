@@ -18,6 +18,7 @@ import functools
 import http.server
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -47,6 +48,7 @@ WEARER_MIN = 0.6
 REFUSE_BELOW = 0.35     # only refuse when fairly sure it's someone else
 COMMAND_SETTLE_S = 1.2  # wait this long after the last raised-wrist words before acting
 CLIP_SECONDS = 30
+NAME_HINT = re.compile(r"\b(hey|hi|hello|yo|thanks|thank you|i'm|i am|this is|my name)\b", re.I)
 CONTEXT_S = 6.0          # seconds of earlier audio given to Nemotron with each sentence
 
 
@@ -139,6 +141,12 @@ class Cast:
         from vexo_open.audio import PcmDecoder
         from voices import AudioBuffer, Voices
         self.voices = Voices()               # SpeechBrain ECAPA voiceprints (CPU)
+        self.voices_path = ROOT / "data" / "voices.npz"
+        if os.environ.get("CAST_FRESH") != "1" and self.voices.load(self.voices_path):
+            print("Remembered %d voices from last time%s." % (
+                len(self.voices.speakers), ", including the wearer" if self.voices.wearer_id is not None else ""))
+        self.pending_name = None              # (name, time): the wearer just addressed someone by name
+        threading.Thread(target=self._save_loop, daemon=True).start()
         self.audio = AudioBuffer()
         self.decoder = PcmDecoder()
         self.last_voice = None
@@ -146,7 +154,7 @@ class Cast:
         self.last_partial = 0.0
         self.cmd_lock = threading.Lock()
         threading.Thread(target=self._command_loop, daemon=True).start()
-        screen.snapshot = lambda: [self.reminders_msg(), json.dumps({"kind": "mic", "t": time.time(), "on": not self.paused})]
+        screen.snapshot = lambda: [self.reminders_msg(), self.names_msg(), json.dumps({"kind": "mic", "t": time.time(), "on": not self.paused})]
 
     # ---- band events (run on the band's handler thread; keep short)
 
@@ -256,9 +264,18 @@ class Cast:
         vid, sim = run["voice"], run["sim"]
         score = self.wearer_score(vid, rms, pose)
         mode = MODE_OF_POSE.get(pose, "ambient")
+        is_wearer = vid == self.voices.wearer_id
+        # "hey Hardik, ..." a moment ago + a new, unnamed voice answering = that voice is Hardik
+        if (self.pending_name and not is_wearer and self.voices.wearer_id is not None
+                and vid not in self.voices.names and time.time() - self.pending_name[1] < 25
+                and len(run["text"].split()) >= 2):
+            self.set_name(vid, self.pending_name[0], "answered when you said their name")
+            self.pending_name = None
         entry = {"speaker": vid, "text": run["text"], "start": start, "end": end,
                  "pose": pose, "rms_db": rms, "wearer": score, "mode": mode,
-                 "is_wearer": vid == self.voices.wearer_id, "voice_sim": round(sim, 2)}
+                 "is_wearer": is_wearer, "voice_sim": round(sim, 2), "name": self.voices.names.get(vid)}
+        if mode == "ambient" and NAME_HINT.search(run["text"]):
+            self.pool.submit(self.learn_names, entry)
         self.segments.append(entry)
         self.screen.send("segment", **entry)
         print("[voice %s%s sim %.2f | %-10s | wearer %.2f | %s] %s" % (
@@ -298,6 +315,43 @@ class Cast:
     def card(self, aid, status, mode, text, result=None, reason=None):
         self.screen.send("action", id=aid, status=status, mode=mode, text=text, result=result, reason=reason)
 
+    # ---- names
+
+    def set_name(self, vid, name, why):
+        if not name or self.voices.names.get(vid) == name:
+            return
+        for other, n in list(self.voices.names.items()):     # one voice per name
+            if n == name and other != vid:
+                del self.voices.names[other]
+        self.voices.names[vid] = name
+        print("[names] voice %s is %s (%s)" % (vid, name, why))
+        self.screen.send("names", names={str(k): v for k, v in self.voices.names.items()})
+        self.card(uuid.uuid4().hex[:8], "done", "command", "Learned a voice", result="Speaker %s is %s (%s)" % (vid, name, why))
+
+    def learn_names(self, entry):
+        try:
+            addressed, self_name = brain.find_names(entry["text"])
+        except Exception as e:  # noqa: BLE001
+            print("[names] failed:", e)
+            return
+        vid = entry["speaker"]
+        if self_name and vid != self.voices.wearer_id:
+            self.set_name(vid, self_name, "said their own name")
+        if addressed and vid == self.voices.wearer_id and addressed not in self.voices.names.values():
+            self.pending_name = (addressed, time.time())
+            print("[names] you addressed %s; the next new voice to answer gets that name" % addressed)
+
+    def names_msg(self):
+        return json.dumps({"kind": "names", "t": time.time(), "names": {str(k): v for k, v in self.voices.names.items()}})
+
+    def _save_loop(self):
+        while True:
+            time.sleep(10)
+            try:
+                self.voices.save(self.voices_path)
+            except Exception as e:  # noqa: BLE001
+                print("[voices] save failed:", e)
+
     def wearer_score(self, voice_id, rms, pose):
         """Wrist raised: loudness decides (15 dB gap in calibration), and confident sentences
         teach Cast which voiceprint is the wearer. Arm down: the voiceprint decides."""
@@ -335,6 +389,15 @@ class Cast:
                 elif intent == "question":
                     say = brain.answer_question(entry["text"], self.transcript_lines(), self.reminder_lines())
                     self.screen.send("action", id=aid, status="done", mode="ask", text=entry["text"], result=say)
+                elif intent == "label_speaker":
+                    others = [s for s in self.segments if s["speaker"] != self.voices.wearer_id]
+                    name = (out.get("name") or "").strip().title()
+                    if others and name:
+                        self.set_name(others[-1]["speaker"], name, "you told me")
+                        say = "Got it, that's %s." % name
+                    else:
+                        say = "I haven't heard anyone else yet."
+                    self.screen.send("action", id=aid, status="done", mode=mode, text=entry["text"], result=say)
                 elif intent == "cancel_reminder":
                     r = self.scheduler.cancel_latest()
                     say = "Cancelled %s." % r["task"] if r else "There's nothing to cancel."
@@ -357,7 +420,8 @@ class Cast:
     def transcript_lines(self):
         out = []
         for s in list(self.segments)[-60:]:
-            who = "You" if s["wearer"] >= WEARER_MIN else "Speaker %s" % s["speaker"]
+            who = ("You" if s["speaker"] == self.voices.wearer_id or s["wearer"] >= WEARER_MIN
+                   else self.voices.names.get(s["speaker"]) or "Speaker %s" % s["speaker"])
             out.append("[%s] %s: %s" % (time.strftime("%-I:%M:%S", time.localtime(s["start"])), who, s["text"]))
         return out
 

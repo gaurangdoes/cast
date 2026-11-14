@@ -48,7 +48,10 @@ Command: "{text}"
 Return JSON with exactly these keys:
 - "intent": "reminder" if they want to be reminded or alerted later, "cancel_reminder" if they
   want to cancel one, "question" if they are asking about something that was said or about their
-  reminders (e.g. "what did she just say?", "when do I need to move the car?"), otherwise "other".
+  reminders (e.g. "what did she just say?", "when do I need to move the car?"), "label_speaker" if
+  they are telling you who someone is (e.g. "that was Hardik", "the person I'm talking to is Maya"),
+  otherwise "other".
+- "name": for "label_speaker", the person's first name; otherwise empty.
 - "task": short label for what to remind them about (empty if not a reminder), e.g. "Move the car".
 - "remind_at": ISO 8601 local time with offset for when to remind them (empty if not a reminder).
   Work out times from what they said, e.g. "I parked, it ends in 2 hours, remind me 5 minutes
@@ -122,3 +125,17 @@ def regex_reminder(text, now):
     when = now + dt.timedelta(seconds=max(5, seconds))
     return {"intent": "reminder", "task": "Reminder", "remind_at": when.isoformat(),
             "remind_at_epoch": when.timestamp(), "say": "Okay, I'll remind you at %s." % when.strftime("%-I:%M")}
+
+
+NAME_PROMPT = """One line from a live conversation transcript: "{text}"
+
+Return JSON {{"addressed": "<first name of the person the speaker is talking TO, if they say it,
+e.g. 'hey Hardik, how's it going' -> Hardik>", "self_name": "<the speaker's own first name if they
+state it, e.g. 'I'm Maya' or 'this is Maya' -> Maya>"}}. Use "" when absent. Names of people who are
+only talked ABOUT do not count. Never guess."""
+
+
+def find_names(text):
+    out = ask_json(NAME_PROMPT.format(text=text.replace('"', "'")), fast=True) or {}
+    clean = lambda v: v.strip().split()[0].strip(".,!?").title() if isinstance(v, str) and v.strip() else ""
+    return clean(out.get("addressed")), clean(out.get("self_name"))

@@ -21,12 +21,13 @@ export interface CastState {
   reminders: Reminder[]
   banner: Banner | null
   micOn: boolean
+  names: Record<string, string>
   gesture: { label: string; at: number } | null
 }
 
 const initial: CastState = {
   conn: 'connecting', pose: null, mode: 'ambient', angle: null, poseSeen: false, levelPct: 0,
-  wearer: null, lines: [], partial: '', cards: [], reminders: [], banner: null, micOn: true, gesture: null,
+  wearer: null, lines: [], partial: '', cards: [], reminders: [], banner: null, micOn: true, names: {}, gesture: null,
 }
 
 type Action =
@@ -53,6 +54,8 @@ function reduce(s: CastState, a: Action): CastState {
 
 function applyEvent(s: CastState, m: CastEvent): CastState {
   switch (m.kind) {
+    case 'names':
+      return { ...s, names: m.names }
     case 'mic':
       return { ...s, micOn: m.on }
     case 'gesture':
