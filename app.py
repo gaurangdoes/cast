@@ -277,7 +277,7 @@ class Cast:
             # audio is what makes a voiceprint reliable (81% right at 1 s, 95% at 3 s).
             t = self.turn
             continuing = (t is not None and r is runs[0] and start - t["end"] < 0.7)
-            changed = vid is not None and vid >= 0 and t is not None and vid != t["vid"] and sim >= 0.20
+            changed = vid is not None and vid >= 0 and t is not None and vid != t["vid"] and sim >= 0.30
             if continuing and not changed:
                 jv, js = self.voices.identify(self.audio.slice(max(t["start"], end - 8.0), end + 0.05))
                 if jv is not None and jv >= 0:
@@ -549,6 +549,8 @@ class Cast:
     # ---- gestures
 
     def on_gesture(self, label, prob):
+        if label != "fist":
+            return                                # thumbs up is out of the demo: taps acknowledge
         print("[gesture] %s (%.2f)" % (label, prob))
         self.screen.send("gesture", label=label, prob=prob)
         if label == "fist":

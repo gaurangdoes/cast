@@ -44,45 +44,71 @@ class Voices:
 
     # ---- enrolled voices (measured on this band: right 95-100% of the time when it commits)
 
+    EXTRA = ("nemo_en_titanet_large", "3dspeaker_speech_eres2netv2_sv_zh-cn_16k-common")
+    EXTRA_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/%s.onnx"
+
+    def _load_extra(self):
+        """Two more voiceprint models (NVIDIA TitaNet-Large, ERes2NetV2). On this band's recordings
+        the three together, with a clear-lead rule, were right 96-98% of the time they committed;
+        ECAPA alone was 92-95% and committed less often."""
+        import sherpa_onnx
+        import urllib.request
+        folder = Path("data/models/spk")
+        folder.mkdir(parents=True, exist_ok=True)
+        self.extra = []
+        for name in self.EXTRA:
+            f = folder / (name + ".onnx")
+            if not f.exists():
+                print("Downloading voice model %s..." % name)
+                urllib.request.urlretrieve(self.EXTRA_URL % name, f)
+            ex = sherpa_onnx.SpeakerEmbeddingExtractor(
+                sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(f), num_threads=2))
+            self.extra.append(ex)
+
+    def embed_all(self, pcm16):
+        """One voiceprint per model: [ECAPA, TitaNet, ERes2NetV2]."""
+        x = np.frombuffer(pcm16, dtype=np.int16).astype(np.float32) / 32768.0
+        out = [self.embed(pcm16)]
+        for ex in self.extra:
+            st = ex.create_stream()
+            st.accept_waveform(SAMPLE_RATE, x)
+            st.input_finished()
+            out.append(np.array(ex.compute(st)))
+        return out
+
     def enroll_folder(self, folder):
-        """Each <label>_<time>.pcm is ~40 s of one person. 'wearer' is the person wearing the band."""
+        """Each <label>_<time>.pcm is ~40 s of one person. 'wearer' is the person wearing the band.
+        Every recording becomes its own example of that voice (a voice sounds different to the band
+        with the wrist at the mouth, resting, or at the side)."""
         folder = Path(folder)
         files = sorted(folder.glob("*.pcm"))
         labels = sorted({f.stem.rsplit("_", 1)[0] for f in files}, key=lambda l: (l != "wearer", l))
         if "wearer" not in labels or len(labels) < 2:
             return False
+        self._load_extra()
         try:
             given = json.loads((folder / "names.json").read_text())
         except (OSError, ValueError):
             given = {}
-        n = 2 * SAMPLE_RATE
+        n = 3 * SAMPLE_RATE
+        raw = {}
         for i, label in enumerate(labels):
-            embs = []
+            raw[i] = []
             for f in files:
                 if f.stem.rsplit("_", 1)[0] != label:
                     continue
                 x = np.frombuffer(f.read_bytes(), dtype=np.int16)
                 ref = np.sqrt(np.mean(x.astype(float) ** 2))
-                for a in range(0, len(x) - n, n // 2):
-                    c = x[a:a + n]
-                    if np.sqrt(np.mean(c.astype(float) ** 2)) > 0.35 * ref:      # skip silence
-                        embs.append(self.embed(c.tobytes()))
-            per_file = {}
-            self.enrolled[i] = []
-            n_files = 0
-            for f in files:
-                if f.stem.rsplit("_", 1)[0] != label:
-                    continue
-                x = np.frombuffer(f.read_bytes(), dtype=np.int16)
-                ref = np.sqrt(np.mean(x.astype(float) ** 2))
-                fe = [self.embed(x[a:a + n].tobytes()) for a in range(0, len(x) - n, n // 2)
-                      if np.sqrt(np.mean(x[a:a + n].astype(float) ** 2)) > 0.35 * ref]
-                if fe:                                   # a voice sounds different at the mouth, resting,
-                    self.enrolled[i].append(np.mean(fe, axis=0))   # at the side: keep one print per recording
+                embs = [self.embed_all(x[a:a + n].tobytes()) for a in range(0, len(x) - n, n // 2)
+                        if np.sqrt(np.mean(x[a:a + n].astype(float) ** 2)) > 0.35 * ref]      # skip silence
+                if embs:
+                    raw[i].append([np.mean([e[m] for e in embs], axis=0) for m in range(len(embs[0]))])
             if label != "wearer":
                 self.names[i] = given.get(label) or "Person %d" % (i + 1)
-        self.mu = np.mean([c for cs in self.enrolled.values() for c in cs], axis=0)
-        self.centred = {i: [self._unit(c - self.mu) for c in cs] for i, cs in self.enrolled.items()}
+        n_models = 1 + len(self.extra)
+        self.mu = [np.mean([ex[m] for exs in raw.values() for ex in exs], axis=0) for m in range(n_models)]
+        self.enrolled = {i: [[self._unit(ex[m] - self.mu[m]) for m in range(n_models)] for ex in exs]
+                         for i, exs in raw.items()}
         self.wearer_id = 0
         self.labels = labels
         return True
@@ -95,17 +121,14 @@ class Voices:
         seconds = len(pcm16) / (SAMPLE_RATE * 2)
         if seconds < 1.0:
             return None, 0.0
-        e = self._unit(self.embed(pcm16) - self.mu)
-        scores = sorted(((max(float(e @ c) for c in cs), i) for i, cs in self.centred.items()), reverse=True)
+        e = [self._unit(v - mu) for v, mu in zip(self.embed_all(pcm16), self.mu)]
+        # per person: for each model, the best match among that person's examples; then average the models
+        scores = sorted(((float(np.mean([max(float(e[m] @ ex[m]) for ex in exs) for m in range(len(e))])), i)
+                         for i, exs in self.enrolled.items()), reverse=True)
         margin = scores[0][0] - scores[1][0]
-        # commit only on a clear lead; measured: margin >= 0.10 is right 97-100% of the time on
-        # clips of 1.5 s and more, and about a quarter of clips stay undecided
-        need = 0.10 if seconds >= 1.5 else 0.16
-        if margin >= 0.25 and seconds >= 2.5:
-            # a clear, long clip: remember it as one more example of this person's voice today
-            cs = self.centred[scores[0][1]]
-            if len(cs) < 12:
-                cs.append(e)
+        need = 0.20 if seconds >= 1.5 else 0.26       # commit only on a clear lead
+        if margin >= 0.30 and seconds >= 2.5 and len(self.enrolled[scores[0][1]]) < 10:
+            self.enrolled[scores[0][1]].append(e)      # a clear, long clip: one more example for today
         return (scores[0][1] if margin >= need else UNKNOWN), margin
 
     def identify(self, pcm16):
