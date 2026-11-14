@@ -18,6 +18,7 @@ import functools
 import http.server
 import json
 import os
+import queue
 import re
 import subprocess
 import sys
@@ -114,15 +115,64 @@ class Screen:
 
 
 class Voice:
-    """Spoken replies. macOS `say` for now; ElevenLabs later. While it talks, speech the
-    band hears is ignored so Cast does not transcribe itself."""
+    """Spoken replies in a Gemini voice (gemini-3.8-flash-lite-tts, about 1.6 s to generate),
+    falling back to the Mac's built-in voice if that fails or is slow. While Cast talks, speech
+    the band hears is ignored so it does not transcribe itself. Replies play one at a time."""
+    MODEL = os.environ.get("CAST_TTS_MODEL", "gemini-3.8-flash-lite-tts")
+    NAME = os.environ.get("CAST_TTS_VOICE", "Kore")
 
     def __init__(self):
         self.busy_until = 0.0
+        self.q = queue.Queue()
+        threading.Thread(target=self._run, daemon=True).start()
 
     def say(self, text):
-        self.busy_until = time.time() + 0.5 + len(text) * 0.07
-        subprocess.Popen(["say", "-r", "205", text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.busy_until = max(self.busy_until, time.time() + 2.5 + len(text) * 0.07)   # until we know better
+        self.q.put(text)
+
+    def _run(self):
+        while True:
+            text = self.q.get()
+            try:
+                wav = self._gemini(text) if os.environ.get("CAST_TTS", "gemini") == "gemini" else None
+            except Exception as e:  # noqa: BLE001
+                print("[voice] Gemini speech failed, using the Mac voice:", str(e)[:100])
+                wav = None
+            try:
+                if wav:
+                    path, seconds = wav
+                    self.busy_until = time.time() + seconds + 0.6
+                    subprocess.run(["afplay", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    self.busy_until = time.time() + 0.5 + len(text) * 0.07
+                    subprocess.run(["say", "-r", "205", text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception as e:  # noqa: BLE001
+                print("[voice] playback failed:", e)
+            self.busy_until = max(self.busy_until, time.time() + 0.4)
+
+    def _gemini(self, text):
+        import base64
+        import tempfile
+        import urllib.request
+        import wave
+        body = {"contents": [{"parts": [{"text": text}]}],
+                "generationConfig": {"responseModalities": ["AUDIO"], "speechConfig": {
+                    "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self.NAME}}}}}
+        req = urllib.request.Request(
+            "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent" % self.MODEL,
+            data=json.dumps(body).encode(),
+            headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"], "Content-Type": "application/json"})
+        part = json.load(urllib.request.urlopen(req, timeout=5))["candidates"][0]["content"]["parts"][0]["inlineData"]
+        data = base64.b64decode(part["data"])
+        path = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
+        if "wav" in part.get("mimeType", ""):
+            Path(path).write_bytes(data)
+        else:                                            # raw 16-bit samples at 24 kHz
+            with wave.open(path, "wb") as w:
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000); w.writeframes(data)
+        with wave.open(path, "rb") as w:
+            seconds = w.getnframes() / float(w.getframerate())
+        return path, seconds
 
     def speaking(self, t_start, t_end):
         return t_start <= self.busy_until
