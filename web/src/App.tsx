@@ -71,7 +71,6 @@ function WristPanel(p: {
         <b>resting</b><span>ambient: remembered only</span>
         <b>double-tap</b><span>pause / resume the microphone</span>
         <b>tap</b><span>acknowledge a reminder</span>
-        <b>fist · 👍</b><span>same, experimental</span>
       </div>
     </section>
   )

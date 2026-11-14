@@ -120,7 +120,10 @@ class Cast:
         self.band, self.screen, self.voice = band, screen, voice
         cal = load_calibration()
         self.poses = LearnedPoses() if gestures.POSE_MODEL.exists() else PoseTracker(cal)
-        self.gest = gestures.LiveDetector(min_prob=0.8, refractory_s=2.5) if gestures.MODEL.exists() else None
+        # Fist / thumbs up did not hold up across arm positions (see README), so they are off
+        # unless CAST_GESTURES=1. Taps (band firmware) do the same jobs reliably.
+        use = os.environ.get("CAST_GESTURES") == "1" and gestures.MODEL.exists()
+        self.gest = gestures.LiveDetector(min_prob=0.8, refractory_s=2.5) if use else None
         self.fast = self.gest is not None or isinstance(self.poses, LearnedPoses)
         self.paused, self.pause_started = False, 0.0
         self.unacked = None                   # (reminder, threading.Event) waiting for a thumbs up
