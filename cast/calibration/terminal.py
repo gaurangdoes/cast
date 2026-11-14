@@ -4,8 +4,8 @@ Walks you through each wrist pose and a few talking tests, records what the band
 sees, and saves the numbers to data/calibration.json. The pose classifier and the
 wearer score are built from this file.
 
-    .venv/bin/python calibrate.py 42        # your band number (on the bag)
-    .venv/bin/python calibrate.py --sim     # pretend band, to check the script runs
+    .venv/bin/python -m cast.calibration.terminal 42        # your band number (on the bag)
+    .venv/bin/python -m cast.calibration.terminal --sim     # pretend band, to check the script runs
 
 Close the kit's dashboard tab first: the band takes one connection at a time.
 Double-tap the band right before running (its light blinks blue).
@@ -17,8 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT / "vexo-open-kit" / "python"))
+from ..paths import ROOT  # noqa: E402  (also puts the kit on the import path)
 from vexo_open.sync import Band  # noqa: E402
 
 POSES = [

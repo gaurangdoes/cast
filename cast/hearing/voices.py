@@ -12,6 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
+from ..paths import DATA
+
 SAME_VOICE = 0.42        # cosine similarity above this: same person (measured: same voice 0.8-0.9 on long speech)
 NEW_SPEAKER_SECONDS = 1.5  # need at least this much audio to start a new speaker
 NEW_PERSON_BELOW = 0.55    # 5 s of speech less similar than this to every known voice: someone new
@@ -25,7 +27,7 @@ class Voices:
     def __init__(self):
         from speechbrain.inference.speaker import EncoderClassifier
         self.model = EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb",
-                                                    savedir="data/models/ecapa", run_opts={"device": "cpu"})
+                                                    savedir=str(DATA / "models" / "ecapa"), run_opts={"device": "cpu"})
         self.lock = threading.Lock()
         self.speakers = []        # [{"id": int, "centroid": np.ndarray, "n": int}]
         self.wearer_id = None
@@ -54,7 +56,7 @@ class Voices:
         ECAPA alone was 92-95% and committed less often."""
         import sherpa_onnx
         import urllib.request
-        folder = Path("data/models/spk")
+        folder = DATA / "models" / "spk"
         folder.mkdir(parents=True, exist_ok=True)
         self.extra = []
         for name in self.EXTRA:

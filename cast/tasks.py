@@ -10,16 +10,16 @@ A task is a trigger plus an action.
   action   say       speak a reminder (repeats until acknowledged with a tap)
            answer    work out an answer from the conversation at that moment and speak it
 
-Saved to data/reminders.json so a restart of app.py does not lose them. Entries written by
+Saved to data/reminders.json so a restart does not lose them. Entries written by
 older versions (a plain timed reminder) still load.
 """
 import json
 import threading
 import time
 import uuid
-from pathlib import Path
+from .paths import DATA
 
-STORE = Path(__file__).resolve().parent / "data" / "reminders.json"
+STORE = DATA / "reminders.json"
 MAX_RUNS = 50            # a repeating task stops after this many runs
 MIN_EVERY_S = 10
 

@@ -18,12 +18,14 @@ import os
 import numpy as np
 import onnxruntime as ort
 
+from ..paths import DATA
+
 SR = 16000
 N_FFT, WIN, HOP, N_MELS, PREEMPH = 512, 400, 160, 128, 0.97
 REPO = "onnx-community/Nemotron-3-Diarization-ONNX"
 MODEL_FILE = os.environ.get("NEMOTRON_ONNX_FILE", "onnx/model.onnx")
 HERE = os.path.dirname(os.path.abspath(__file__))
-LOCAL_DIR = os.environ.get("NEMOTRON_DIR", os.path.join(HERE, "data", "models", "nemotron"))
+LOCAL_DIR = os.environ.get("NEMOTRON_DIR", str(DATA / "models" / "nemotron"))
 
 _session = None
 _mel = None

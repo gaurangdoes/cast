@@ -16,8 +16,9 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parent
-DATA = ROOT / "data" / "gestures"
+from ..paths import DATA as _DATA  # noqa: E402
+
+DATA = _DATA / "gestures"
 MODEL = DATA / "model.pkl"
 RATE = 100                             # both sensors. 208/s flooded the Bluetooth link next to the mic (dropped data)
 PRE_S, POST_S = 0.35, 0.85            # window around an activity peak

@@ -1,7 +1,7 @@
 """Cast: the main program. One process owns the band.
 
-    .venv/bin/python app.py 42          # your band number
-    .venv/bin/python app.py --sim       # pretend band; plays the kit's sample speech
+    .venv/bin/python -m cast 42           # your band number
+    .venv/bin/python -m cast --sim        # pretend band; plays the kit's sample speech
 
 Then open http://localhost:8000 for the big screen.
 
@@ -28,20 +28,18 @@ import time
 from collections import deque
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT / "vexo-open-kit" / "python"))
-sys.path.insert(0, str(ROOT / "vexo-open-kit" / "examples" / "python"))
+from .paths import ROOT  # noqa: E402  (also puts the kit on the import path)
 
 import websockets  # noqa: E402
 
-import brain  # noqa: E402
-import ears  # noqa: E402
-import nemotron  # noqa: E402
+from . import commands as brain  # noqa: E402
+from .hearing import transcribe as ears  # noqa: E402
+from .hearing import diarize as nemotron  # noqa: E402
 from concurrent.futures import ThreadPoolExecutor  # noqa: E402
-from scheduler import Scheduler, keyword_hit, spoken_time  # noqa: E402
-from voices import UNKNOWN  # noqa: E402
-import gestures  # noqa: E402
-from poses import MODE_OF_POSE, LearnedPoses, Loudness, PoseTracker, load_calibration  # noqa: E402
+from .tasks import Scheduler, keyword_hit, spoken_time  # noqa: E402
+from .hearing.voices import UNKNOWN  # noqa: E402
+from .motion import gestures  # noqa: E402
+from .motion.poses import MODE_OF_POSE, LearnedPoses, Loudness, PoseTracker, load_calibration  # noqa: E402
 from vexo_open.sync import Band  # noqa: E402
 
 HTTP_PORT = 8000
@@ -202,7 +200,7 @@ class Cast:
         self.moving, self.move_last, self.move_run = False, False, 0
         print("Loading the voice model...")
         from vexo_open.audio import PcmDecoder
-        from voices import AudioBuffer, Voices
+        from .hearing.voices import AudioBuffer, Voices
         self.voices = Voices()               # SpeechBrain ECAPA voiceprints (CPU)
         self.voices_path = ROOT / "data" / "voices.npz"
         self.lab_dir = ROOT / "data" / "voices_lab"
@@ -864,7 +862,7 @@ def main():
 
     cast = Cast(band, screen, voice)
     if not cast.poses.calibrated:
-        print("No calibration yet: every pose reads as 'moving'. Run calibrate.py first.")
+        print("No calibration yet: every pose reads as 'moving'. Run the calibration page first (python -m cast.calibration).")
     cast.ears = ears.DiarizedDeepgram(on_segment=cast.on_segment, on_partial=cast.on_partial, send="pcm")
     cast.ears.start()
 

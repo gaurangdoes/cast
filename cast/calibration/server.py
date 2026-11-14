@@ -1,10 +1,10 @@
 """Calibration with a screen. Run this, then open http://localhost:8000/#calibrate
 
-    .venv/bin/python calib_server.py 45
+    .venv/bin/python -m cast.calibration 45
 
 The page walks you through each step with a Record button and shows live readings from
 the band. Every recorded step is saved to data/calibration.json straight away, so you can
-redo any single step. Close this (Ctrl+C) before starting app.py: one program per band.
+redo any single step. Close this (Ctrl+C) before starting Cast: one program per band.
 """
 import argparse
 import asyncio
@@ -17,13 +17,12 @@ import threading
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT / "vexo-open-kit" / "python"))
+from ..paths import ROOT  # noqa: E402  (also puts the kit on the import path)
 import numpy as np  # noqa: E402
 import websockets  # noqa: E402
 
-import calibrate  # noqa: E402  (pose list, talk tests, summarize)
-import gestures  # noqa: E402
+from . import terminal as calibrate  # noqa: E402  (pose list, talk tests, summarize)
+from ..motion import gestures  # noqa: E402
 import subprocess  # noqa: E402
 from vexo_open.sync import Band  # noqa: E402
 

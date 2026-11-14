@@ -7,16 +7,14 @@ labels, so each finished piece of speech arrives as segments: who spoke, what, a
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT / "vexo-open-kit" / "examples" / "python"))
-sys.path.insert(0, str(ROOT / "vexo-open-kit" / "python"))
+from .. import paths  # noqa: F401,E402  (puts the kit on the import path)
 import speech  # noqa: E402  (the kit's speech module)
 
 
 class DiarizedDeepgram(speech.DeepgramSpeech):
     """on_segment(words) is called for every finished stretch of speech, with each word's
     {"text", "start", "end"} in seconds since the stream began. Who said which word is
-    decided in app.py (Nemotron + voiceprints), not by Deepgram.
+    decided in cast/app.py (Nemotron + voiceprints), not by Deepgram.
     on_partial(text) gets the live guess while someone is still talking."""
 
     def __init__(self, on_segment, on_partial=None, **options):

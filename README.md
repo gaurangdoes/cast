@@ -45,7 +45,7 @@ Vexo band (Bluetooth)
    background   ──► transcript memory ──► "when someone mentions…" tasks
                                                         │
                                                         ▼
-                    spoken reply · React screen over a WebSocket
+             spoken reply (Gemini speech) · React screen over a WebSocket
 ```
 
 ### Knowing when you are talking to it
@@ -130,8 +130,7 @@ git clone https://github.com/gaurangdoes/cast.git && cd cast
 git clone https://github.com/VexoAI-Org/vexo-open-kit.git
 
 uv venv --python 3.13 .venv
-uv pip install --python .venv/bin/python bleak av numpy websockets \
-    torch torchaudio speechbrain onnxruntime sherpa-onnx scikit-learn huggingface_hub
+uv pip install --python .venv/bin/python -e .      # dependencies are listed in pyproject.toml
 
 cp .env.example .env        # then fill in DEEPGRAM_API_KEY and GEMINI_API_KEY
 
@@ -143,7 +142,7 @@ The speaker and diarization models download themselves on first run (about 600 M
 ## Calibrate (once per wearer, and again if the band moves)
 
 ```bash
-.venv/bin/python calib_server.py <band number>
+.venv/bin/python -m cast.calibration <band number>
 ```
 
 Open <http://localhost:8000/#calibrate>, double-tap the band so its light blinks blue, and press Connect. Then record:
@@ -157,8 +156,8 @@ Stop the server with Ctrl+C before starting Cast. The band accepts one connectio
 ## Run
 
 ```bash
-.venv/bin/python app.py <band number>     # then open http://localhost:8000
-.venv/bin/python app.py --sim             # pretend band with the kit's sample speech, no hardware
+.venv/bin/python -m cast <band number>     # then open http://localhost:8000
+.venv/bin/python -m cast --sim             # pretend band with the kit's sample speech, no hardware
 ```
 
 While Cast runs, everything the band's microphone hears is sent to Deepgram. The band's light is solid blue whenever the microphone is on. Tell the people near you.
@@ -171,6 +170,8 @@ Settings, as environment variables:
 | `CAST_FRESH=1` | Ignore voices remembered from an earlier run (only used when nobody is enrolled) |
 | `CAST_MIC_GAIN=10` | Lower the microphone gain; loudness cutoffs shift to match. Untested. |
 | `CAST_MODEL`, `CAST_FALLBACK_MODEL` | Gemini models for questions and for command parsing |
+| `CAST_TTS=mac` | Speak with the Mac's built-in voice instead of Gemini's |
+| `CAST_TTS_VOICE`, `CAST_TTS_MODEL` | Which Gemini voice and speech model to use |
 
 To preview the screen without a band:
 
@@ -180,21 +181,29 @@ PORT=8799 node scripts/mock-server.mjs    # in one terminal
 pnpm dev                                  # in another, then open http://localhost:5173/?ws=ws://localhost:8799
 ```
 
-## Files
+## Layout
 
-| File | What it is |
-|---|---|
-| `app.py` | The main program: band events, speech pipeline, command handling, screen events |
-| `ears.py` | Deepgram live transcription with word timings |
-| `nemotron.py` | NVIDIA Nemotron 3 Diarization through ONNX Runtime, with its feature extraction |
-| `voices.py` | Voice enrolment, the three-model comparison, new-speaker discovery |
-| `poses.py` | Wrist pose from the direction of gravity; loudness timeline |
-| `gestures.py` | Fist detector and pose model, trained on recordings from the calibration page |
-| `brain.py` | Gemini prompts: commands into tasks, questions answered from the transcript |
-| `scheduler.py` | Tasks: triggers, actions, repeats, persistence |
-| `calib_server.py`, `calibrate.py` | The calibration page's server and a terminal version |
-| `web/` | The React screen and the calibration page |
+```
+cast/
+  app.py              the main program: band events, speech pipeline, command gate, screen events
+  commands.py         Gemini prompts: speech into tasks, questions answered from the transcript
+  tasks.py            the task scheduler: triggers, actions, repeats, persistence
+  paths.py            where data, the kit and the web build live
+  hearing/
+    transcribe.py     Deepgram live transcription with word timings
+    diarize.py        NVIDIA Nemotron 3 Diarization through ONNX Runtime
+    voices.py         enrolment, the three-model voice comparison, new-speaker discovery, learning
+  motion/
+    poses.py          wrist pose from the direction of gravity; loudness timeline
+    gestures.py       fist detector and pose model, trained on recordings from the calibration page
+  calibration/
+    server.py         the calibration page's server (python -m cast.calibration)
+    terminal.py       the same pose and loudness recordings from a terminal
+web/                  the React screen and the calibration page (Vite + TypeScript)
+data/                 recordings, models, saved tasks and voices. Never committed.
+vexo-open-kit/        the band's kit, cloned here. Never committed.
+```
 
 ## Built with
 
-Vexo Open band and kit · Deepgram (speech to text) · Google Gemini 4 (commands, questions, recaps) · NVIDIA Nemotron 3 Diarization and TitaNet-Large · SpeechBrain ECAPA · ERes2NetV2 · sherpa-onnx · React and Vite.
+Vexo Open band and kit · Deepgram (speech to text) · Google Gemini (Gemini 4 for commands, questions and recaps; Gemini speech for Cast's voice) · NVIDIA Nemotron 3 Diarization and TitaNet-Large · SpeechBrain ECAPA · ERes2NetV2 · sherpa-onnx · React and Vite.

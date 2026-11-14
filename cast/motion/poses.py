@@ -12,9 +12,9 @@ import json
 import math
 import time
 from collections import deque
-from pathlib import Path
+from ..paths import DATA
 
-CALIBRATION = Path(__file__).resolve().parent / "data" / "calibration.json"
+CALIBRATION = DATA / "calibration.json"
 
 MAX_ANGLE_DEG = 28      # further than this from every calibrated pose: "moving"
 HOLD_S = 0.3            # a pose must hold this long to count
@@ -167,7 +167,7 @@ class LearnedPoses(PoseTracker):
     NAME = {"raised": "mouth", "rest": "rest_table", "side": "side"}
 
     def __init__(self):
-        import gestures
+        from . import gestures
         self.live = gestures.LivePose()
         self.pose = "moving"
         self.history = deque(maxlen=4000)        # one entry per 50 ms: over 3 minutes

@@ -1,0 +1,29 @@
+[project]
+name = "cast"
+version = "0.1.0"
+description = "A voice assistant on a Vexo wristband that knows when you are talking to it and who is talking."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "bleak",            # Bluetooth to the band
+    "av",               # Opus decoding
+    "numpy",
+    "websockets",       # the screen
+    "torch",
+    "torchaudio",
+    "speechbrain",      # ECAPA voiceprints
+    "onnxruntime",      # Nemotron diarization
+    "sherpa-onnx",      # TitaNet and ERes2NetV2 voiceprints
+    "scikit-learn",     # fist detector
+    "huggingface_hub",
+]
+
+[project.scripts]
+cast = "cast.app:main"
+cast-calibrate = "cast.calibration.server:main"
+
+[tool.setuptools.packages.find]
+include = ["cast*"]
+
+[tool.ruff]
+line-length = 120
