@@ -8,6 +8,7 @@ Sentences spoken with the wrist raised and clearly loud teach Cast which voice i
 import json
 import os
 import threading
+from pathlib import Path
 
 import numpy as np
 
@@ -29,6 +30,8 @@ class Voices:
         self.wearer_id = None
         self.wearer_votes = {}
         self.aliases = {}         # merged speaker id -> surviving id
+        self.enrolled = {}        # speaker id -> voiceprint from a 40 s enrolment recording
+        self.mu = None            # mean of the enrolled voiceprints (subtracted before comparing)
         self.names = {}           # speaker id -> name ("Hardik"), learned from conversation
         self.next_id = 0
 
@@ -39,10 +42,62 @@ class Voices:
             e = self.model.encode_batch(wav).squeeze().numpy()
         return e / (np.linalg.norm(e) or 1.0)
 
+    # ---- enrolled voices (measured on this band: right 95-100% of the time when it commits)
+
+    def enroll_folder(self, folder):
+        """Each <label>_<time>.pcm is ~40 s of one person. 'wearer' is the person wearing the band."""
+        folder = Path(folder)
+        files = sorted(folder.glob("*.pcm"))
+        labels = sorted({f.stem.rsplit("_", 1)[0] for f in files}, key=lambda l: (l != "wearer", l))
+        if "wearer" not in labels or len(labels) < 2:
+            return False
+        try:
+            given = json.loads((folder / "names.json").read_text())
+        except (OSError, ValueError):
+            given = {}
+        n = 2 * SAMPLE_RATE
+        for i, label in enumerate(labels):
+            embs = []
+            for f in files:
+                if f.stem.rsplit("_", 1)[0] != label:
+                    continue
+                x = np.frombuffer(f.read_bytes(), dtype=np.int16)
+                ref = np.sqrt(np.mean(x.astype(float) ** 2))
+                for a in range(0, len(x) - n, n // 2):
+                    c = x[a:a + n]
+                    if np.sqrt(np.mean(c.astype(float) ** 2)) > 0.35 * ref:      # skip silence
+                        embs.append(self.embed(c.tobytes()))
+            self.enrolled[i] = np.mean(embs, axis=0)
+            if label != "wearer":
+                self.names[i] = given.get(label) or "Person %d" % (i + 1)
+        self.mu = np.mean(list(self.enrolled.values()), axis=0)
+        self.centred = {i: self._unit(c - self.mu) for i, c in self.enrolled.items()}
+        self.wearer_id = 0
+        self.labels = labels
+        return True
+
+    @staticmethod
+    def _unit(e):
+        return e / (np.linalg.norm(e) or 1.0)
+
+    def identify_enrolled(self, pcm16):
+        seconds = len(pcm16) / (SAMPLE_RATE * 2)
+        if seconds < 1.0:
+            return None, 0.0
+        e = self._unit(self.embed(pcm16) - self.mu)
+        scores = sorted(((float(e @ c), i) for i, c in self.centred.items()), reverse=True)
+        margin = scores[0][0] - scores[1][0]
+        # commit only on a clear lead; measured: margin >= 0.10 is right 97-100% of the time on
+        # clips of 1.5 s and more, and about a quarter of clips stay undecided
+        need = 0.10 if seconds >= 1.5 else 0.16
+        return (scores[0][1] if margin >= need else UNKNOWN), margin
+
     def identify(self, pcm16):
         """Returns (speaker id, similarity) or (None, 0) if the slice is too short.
         Short audio gives unreliable voiceprints, so it is only ever matched to a known voice;
         a new speaker needs NEW_SPEAKER_SECONDS of audio that clearly matches nobody."""
+        if self.enrolled:
+            return self.identify_enrolled(pcm16)
         seconds = len(pcm16) / (SAMPLE_RATE * 2)
         if seconds < MIN_SECONDS:
             return None, 0.0
@@ -122,7 +177,7 @@ class Voices:
         return True
 
     def vote_wearer(self, speaker_id, yes):
-        if speaker_id is None or speaker_id < 0:      # never learn 'unknown' as the wearer
+        if speaker_id is None or speaker_id < 0 or self.enrolled:   # enrolled: the wearer is known
             return
         with self.lock:
             self.wearer_votes[speaker_id] = self.wearer_votes.get(speaker_id, 0) + (1 if yes else -1)

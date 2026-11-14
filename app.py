@@ -144,7 +144,10 @@ class Cast:
         from voices import AudioBuffer, Voices
         self.voices = Voices()               # SpeechBrain ECAPA voiceprints (CPU)
         self.voices_path = ROOT / "data" / "voices.npz"
-        if os.environ.get("CAST_FRESH") != "1" and self.voices.load(self.voices_path):
+        self.lab_dir = ROOT / "data" / "voices_lab"
+        if self.voices.enroll_folder(self.lab_dir):
+            print("Enrolled voices: you + %s" % ", ".join(self.voices.names.values()))
+        elif os.environ.get("CAST_FRESH") != "1" and self.voices.load(self.voices_path):
             print("Remembered %d voices from last time%s." % (
                 len(self.voices.speakers), ", including the wearer" if self.voices.wearer_id is not None else ""))
         self.pending_name = None              # (name, time): the wearer just addressed someone by name
@@ -152,6 +155,7 @@ class Cast:
         self.audio = AudioBuffer()
         self.decoder = PcmDecoder()
         self.last_voice = None
+        self.last_run_end = None
         self.last_seq = None
         self.pending_cmd = None               # raised-wrist speech collected until the speaker pauses
         self.last_partial = 0.0
@@ -264,8 +268,10 @@ class Cast:
             # Nemotron only decides where the speaker changes; who it is comes from this
             # stretch's own audio, never from the context before it
             vid, sim = self.voices.identify(self.audio.slice(start - 0.05, end + 0.05))
-            if vid is None:                                  # under 0.7 s: can't tell
-                vid = UNKNOWN
+            if vid is None:                                  # too short to tell: same person as
+                recent = self.last_run_end is not None and start - self.last_run_end < 1.0   # a moment ago
+                vid = self.last_voice if recent and self.last_voice is not None else UNKNOWN
+            self.last_run_end = end
             vid = self.voices.resolve(vid)
             self.last_voice = vid
             out.append({"voice": vid, "sim": sim, "start": start, "end": end,
@@ -352,6 +358,12 @@ class Cast:
             if n == name and other != vid:
                 del self.voices.names[other]
         self.voices.names[vid] = name
+        if self.voices.enrolled:                     # remember the name with the enrolment
+            try:
+                given = {self.voices.labels[i]: n for i, n in self.voices.names.items() if i < len(self.voices.labels)}
+                (self.lab_dir / "names.json").write_text(json.dumps(given))
+            except Exception as e:  # noqa: BLE001
+                print("[names] could not save:", e)
         print("[names] voice %s is %s (%s)" % (vid, name, why))
         self.screen.send("names", names={str(k): v for k, v in self.voices.names.items()})
         self.card(uuid.uuid4().hex[:8], "done", "command", "Learned a voice", result="Speaker %s is %s (%s)" % (vid, name, why))
@@ -380,7 +392,8 @@ class Cast:
         while True:
             time.sleep(10)
             try:
-                self.voices.save(self.voices_path)
+                if not self.voices.enrolled:
+                    self.voices.save(self.voices_path)
             except Exception as e:  # noqa: BLE001
                 print("[voices] save failed:", e)
 
@@ -399,6 +412,8 @@ class Cast:
             return round(0.6 * loud + 0.4 * match, 2)
         if self.voices.wearer_id is None:
             return 0.5
+        if voice_id < 0:
+            return 0.5                               # undecided voice
         return 0.9 if voice_id == self.voices.wearer_id else 0.1
 
     def act(self, mode, entry):
