@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer } from 'react'
-import type { Banner, Card, CastEvent, ConnState, Mode, Pose, Reminder, SegmentEvent } from './types'
+import type { Banner, Card, CastEvent, ConnState, Mode, Pose, Reminder, SegmentEvent, TaskFields } from './types'
 
 const MAX_LINES = 300
 const MAX_CARDS = 100
@@ -23,11 +23,12 @@ export interface CastState {
   micOn: boolean
   names: Record<string, string>
   gesture: { label: string; at: number } | null
+  ignored: number
 }
 
 const initial: CastState = {
   conn: 'connecting', pose: null, mode: 'ambient', angle: null, poseSeen: false, levelPct: 0,
-  wearer: null, lines: [], partial: '', cards: [], reminders: [], banner: null, micOn: true, names: {}, gesture: null,
+  wearer: null, lines: [], partial: '', cards: [], reminders: [], banner: null, micOn: true, names: {}, gesture: null, ignored: 0,
 }
 
 type Action =
@@ -52,12 +53,21 @@ function reduce(s: CastState, a: Action): CastState {
   }
 }
 
+function taskOf(m: TaskFields): Reminder {
+  return {
+    id: m.id, task: m.task, remind_at: typeof m.remind_at === 'number' ? m.remind_at : null, status: m.status,
+    trigger_label: m.trigger_label, action_label: m.action_label, kind_of: m.kind_of,
+  }
+}
+
 function applyEvent(s: CastState, m: CastEvent): CastState {
   switch (m.kind) {
     case 'names':
       return { ...s, names: m.names }
     case 'mic':
       return { ...s, micOn: m.on }
+    case 'ignored':
+      return { ...s, ignored: Number(m.count) || 0 }
     case 'gesture':
       return { ...s, gesture: { label: m.label, at: m.t } }
     case 'pose':
@@ -85,16 +95,16 @@ function applyEvent(s: CastState, m: CastEvent): CastState {
         return { ...s, reminders: rest, banner: s.banner?.id === m.id ? null : s.banner }
       }
       if (m.status === 'due') {
-        const r: Reminder = { id: m.id, task: m.task, remind_at: m.remind_at, status: 'due', dueSince: Date.now() }
+        const r: Reminder = { ...taskOf(m), status: 'due', dueSince: Date.now() }
         return { ...s, reminders: [...rest, r], banner: { key: nextKey(), id: m.id, task: m.task, say: m.say } }
       }
-      return { ...s, reminders: [...rest, { id: m.id, task: m.task, remind_at: m.remind_at, status: 'scheduled' }] }
+      return { ...s, reminders: [...rest, { ...taskOf(m), status: 'scheduled' }] }
     }
     case 'reminders': {
       const prev = new Map(s.reminders.map((r) => [r.id, r]))
       const reminders = m.items
         .filter((i) => i.status !== 'cancelled')
-        .map((i) => ({ ...i, dueSince: i.status === 'due' ? (prev.get(i.id)?.dueSince ?? Date.now()) : undefined }))
+        .map((i) => ({ ...taskOf(i), dueSince: i.status === 'due' ? (prev.get(i.id)?.dueSince ?? Date.now()) : undefined }))
       const due = s.reminders.filter((r) => r.status === 'due' && !reminders.some((x) => x.id === r.id))
       return { ...s, reminders: [...due, ...reminders] }
     }

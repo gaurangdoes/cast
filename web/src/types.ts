@@ -15,12 +15,14 @@ export interface ActionEvent extends Base {
 }
 export interface ClipEvent extends Base { kind: 'clip'; text: string; speaker: number | null }
 export type ReminderStatus = 'scheduled' | 'due' | 'cancelled'
-export interface ReminderEvent extends Base {
-  kind: 'reminder'; status: ReminderStatus; id: string; task: string; remind_at: number; say?: string
+export type TaskKind = 'time' | 'repeat' | 'activity' | 'heard'
+/** Optional task fields: how it triggers and what it will do. remind_at is null for non-time triggers. */
+export interface TaskFields {
+  id: string; task: string; remind_at: number | null; status: ReminderStatus
+  trigger_label?: string; action_label?: string; kind_of?: TaskKind
 }
-export interface RemindersEvent extends Base {
-  kind: 'reminders'; items: { id: string; task: string; remind_at: number; status: ReminderStatus }[]
-}
+export interface ReminderEvent extends Base, TaskFields { kind: 'reminder'; say?: string }
+export interface RemindersEvent extends Base { kind: 'reminders'; items: TaskFields[] }
 
 export type CastEvent =
   | PoseEvent | LevelEvent | PartialEvent | SegmentEvent | ActionEvent | ClipEvent | ReminderEvent | RemindersEvent
@@ -28,8 +30,7 @@ export type CastEvent =
   | { kind: 'ignored'; t: number; count: number }
   | { kind: 'mic'; t: number; on: boolean } | { kind: 'gesture'; t: number; label: string; prob: number }
 
-export interface Reminder {
-  id: string; task: string; remind_at: number; status: ReminderStatus
+export interface Reminder extends TaskFields {
   dueSince?: number // ms timestamp when it went due (for highlight)
 }
 
