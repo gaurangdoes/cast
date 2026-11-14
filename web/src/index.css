@@ -1,20 +1,22 @@
 :root {
-  --bg: #f4f5f7; --panel: #ffffff; --line: #e1e5eb; --fg: #131a24; --muted: #5b6676; --faint: #8b95a3;
-  --inset: #f5f6f8; --well: #e8ebf0; --btn: #eef1f5;
-  --accent: #3448d6; --accent-soft: #eef0fd; --accent-line: #c9cffa;
-  --command: var(--accent); --ask: #7c4dde; --ambient: #8794a5; --note: #12935a; --for_them: #c2620a; --status: #0e8f8f;
-  --ok: #0f8a54; --ok-soft: #e4f5ec; --bad: #cf3636; --bad-soft: #fdecec; --warn: #c2620a;
-  --due: #f5b800; --due-soft: #fff5d1; --due-strong: #ffe58a; --due-ink: #7a5200;
-  --spk0: #0f766e; --spk1: #c2410c; --spk2: #b0246a; --spk3: #4d7c0f; --spk4: #0369a1;
-  --display: "Space Grotesk", system-ui, sans-serif; --body: "Inter", system-ui, sans-serif; --mono: "JetBrains Mono", ui-monospace, monospace;
-  --shadow: 0 1px 2px rgba(19, 26, 36, .04), 0 4px 16px rgba(19, 26, 36, .04);
+  /* tokens from the cobalt2 findings UI: warm off-white ground, hairline borders, slate accent, system type */
+  --bg: #f5f5f2; --panel: #ffffff; --line: #e4e7ec; --fg: #11151c; --muted: #5b6676; --faint: #8a94a3;
+  --inset: #f8f8f6; --well: #eceeea; --btn: #f1f2ef;
+  --accent: #292d30; --accent-soft: #eef0ed; --accent-line: #d3d7d1;
+  --command: var(--accent); --ask: #292d30; --ambient: #8a94a3; --note: #067647; --for_them: #b54708; --status: #5b6676;
+  --ok: #067647; --ok-soft: #ecfdf3; --bad: #b42318; --bad-soft: #fef3f2; --warn: #b54708;
+  --due: #b54708; --due-soft: #fffaeb; --due-strong: #fef0c7; --due-ink: #7a2e0e;
+  --spk0: #175cd3; --spk1: #b54708; --spk2: #6941c6; --spk3: #067647; --spk4: #c11574;
+  --display: system-ui, -apple-system, "Segoe UI", sans-serif; --body: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --shadow: none;
   color-scheme: light;
 }
 * { box-sizing: border-box; }
 /* rem scales with the viewport so the main screen stays legible from a few metres: 16px at 1280, ~19.5px at 1920 */
-html { font-size: clamp(15px, calc(9px + .55vw), 21px); }
+html { font-size: 14px; }
 html, body, #root { height: 100%; margin: 0; }
-body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 16px; -webkit-font-smoothing: antialiased; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 
 /* ---- shared primitives (also used by the calibration page) ---- */
 .panel { box-shadow: 0 1px 2px rgba(19, 26, 36, .05); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 14px; min-height: 0; }
@@ -272,3 +274,20 @@ h2 { font-family: var(--mono); font-weight: 500; font-size: 12px; letter-spacing
 .lab-counter-n { font-family: var(--display); font-size: 48px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .lab-counter-k { font-family: var(--mono); color: var(--muted); }
 .lab-pose { padding: 12px 18px; border-radius: 12px; border: 1px solid var(--command); background: color-mix(in srgb, var(--command) 8%, var(--panel)); text-align: center; min-width: 220px; }
+
+/* ---- cobalt2 look: dense, flat, hairlines, uppercase section labels ---- */
+.app { padding: 0 0 14px; gap: 12px; }
+.topbar { padding: 10px 20px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.topbar .brand { font-size: 20px; font-weight: 700; letter-spacing: 0; }
+.topbar .brand::before { content: "\25C6"; margin-right: 8px; font-size: 14px; vertical-align: 2px; }
+.tagline { font-size: 13px; padding-top: 0; }
+.pill, .toggle { height: 28px; padding: 0 10px; font-size: 12px; font-weight: 600; }
+.offrecord { margin: 0 20px; border-radius: 10px; padding: 8px 14px; font-size: 14px; }
+.offrecord b { font-size: 14px; }
+.cols { padding: 0 20px; gap: 12px; grid-template-columns: 250px minmax(0, 1fr) 330px; }
+.card-panel { border-radius: 12px; box-shadow: none; padding: 16px 18px; gap: 12px; }
+.side { gap: 12px; }
+.app h2 { font-family: var(--body); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.panel-note { font-size: 12px; }
+.banner-task { font-size: clamp(28px, 4vw, 56px); }
+@media (max-width: 1100px) { .cols { grid-template-columns: 1fr; } }
