@@ -18,7 +18,7 @@ export default function App() {
   return (
     <>
       {state.banner && <DueBanner key={state.banner.key} banner={state.banner} onDismiss={dismissBanner} />}
-      {!state.micOn && <div className="offrecord">Off the record · microphone is off · close your fist to resume</div>}
+      {!state.micOn && <div className="offrecord">Off the record · microphone is off · double-tap to resume</div>}
       {state.gesture && <GestureToast key={state.gesture.at} label={state.gesture.label} />}
       <div className="app">
         <WristPanel
@@ -69,8 +69,9 @@ function WristPanel(p: {
       <div className="legend">
         <b>wrist to mouth</b><span>talk to Cast: commands and questions</span>
         <b>resting</b><span>ambient: remembered only</span>
-        <b>double-tap</b><span>clip what was just said</span>
-        <b>glance</b><span>hear your next reminder</span>
+        <b>double-tap</b><span>pause / resume the microphone</span>
+        <b>tap</b><span>acknowledge a reminder</span>
+        <b>fist · 👍</b><span>same, experimental</span>
       </div>
     </section>
   )

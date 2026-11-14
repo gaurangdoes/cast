@@ -120,7 +120,7 @@ class Cast:
         self.band, self.screen, self.voice = band, screen, voice
         cal = load_calibration()
         self.poses = LearnedPoses() if gestures.POSE_MODEL.exists() else PoseTracker(cal)
-        self.gest = gestures.LiveDetector() if gestures.MODEL.exists() else None
+        self.gest = gestures.LiveDetector(min_prob=0.8, refractory_s=2.5) if gestures.MODEL.exists() else None
         self.fast = self.gest is not None or isinstance(self.poses, LearnedPoses)
         self.paused, self.pause_started = False, 0.0
         self.unacked = None                   # (reminder, threading.Event) waiting for a thumbs up
@@ -178,7 +178,10 @@ class Cast:
             pass
 
     def on_double_tap(self, e):
-        self.clip()
+        self.pool.submit(self.toggle_pause)       # firmware tap detection: the reliable way to pause
+
+    def on_tap(self, e):
+        self.pool.submit(self.acknowledge, "Tap")
 
     # ---- speech
 
@@ -385,20 +388,29 @@ class Cast:
         self.screen.send("gesture", label=label, prob=prob)
         if label == "fist":
             self.toggle_pause()
-        elif label == "thumbs_up" and self.unacked:
-            r, acked = self.unacked
-            self.unacked = None
-            acked.set()
-            self.card(uuid.uuid4().hex[:8], "done", "command", "Thumbs up", result="Acknowledged: %s" % r["task"])
-            self.voice.say("Got it.")
+        elif label == "thumbs_up":
+            self.acknowledge("Thumbs up")
+
+    def acknowledge(self, how):
+        if not self.unacked:
+            return
+        r, acked = self.unacked
+        self.unacked = None
+        acked.set()
+        self.card(uuid.uuid4().hex[:8], "done", "command", how, result="Acknowledged: %s" % r["task"])
+        self.voice.say("Got it.")
 
     def toggle_pause(self):
         """Fist: the microphone really turns off (the band's blue light goes out)."""
+        if time.time() - getattr(self, "last_toggle", 0) < 2.0:
+            return                            # one toggle per gesture, however it was detected
+        self.last_toggle = time.time()
         if not self.paused:
             self.paused, self.pause_started = True, time.time()
             self.band.configure(audio=False, mic_level=False)
             self.screen.send("mic", on=False)
             self.voice.say("Off the record.")
+            self.last_toggle = time.time()
         else:
             self.band.configure(audio=True, mic_level=True)
             if self.audio_t0 is not None:     # Deepgram's clock only counts audio it received
@@ -482,6 +494,7 @@ def main():
     band.on("mic-level", cast.on_mic)
     band.on("audio", cast.on_audio)
     band.on("double-tap", cast.on_double_tap)
+    band.on("tap", cast.on_tap)
     if cast.fast:        # 416 accelerometer readings a second: the most Bluetooth carries next to the mic
         band.configure(motion=gestures.RATE, sensors="accel", events=True, audio=True, mic_level=True)
     else:

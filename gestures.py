@@ -64,8 +64,10 @@ def features(acc):
     tot = sum(bands) or 1.0
     act = activity(acc)[LP_K:-LP_K]          # skip the window edges (smoothing artefacts)
     above = float((act > 0.5 * act.max()).mean()) if len(act) and act.max() > 0 else 0.0
+    # No absolute orientation here on purpose: with it the model learned "the arm position I
+    # recorded in" instead of the gesture, and fired every second in that position.
     return np.concatenate([
-        g0, gp, g1,                                          # orientation before / at peak / after
+        gp - g0, g1 - g0,                                    # how gravity moved, relative to the start
         [ang(g0, gp), ang(gp, g1), ang(g0, g1)],             # how far it turned, and whether it came back
         lp.std(0),                                           # slow movement per axis
         [hpm.mean() * 1000, np.percentile(hpm, 95) * 1000, hpm.max() * 1000],   # vibration (mg)
@@ -129,6 +131,14 @@ class Recordings:
                 wins = [(q, d["acc"][q - pre:q + post]) for q in range(pre, len(d["acc"]) - post, int(0.3 * RATE))]
             else:
                 wins = peak_windows(d["t"], d["acc"], cue_times=list(d["cues"]))
+                # the quiet moment before each cue, same arm position, is NOT the gesture
+                tt = (d["t"] - d["t"][0]) / 1000.0
+                pre, post = int(PRE_S * RATE), int(POST_S * RATE)
+                for c in d["cues"]:
+                    q = int(np.searchsorted(tt, c - 0.95))
+                    if q - pre >= 0 and q + post <= len(tt):
+                        X.append(features(d["acc"][q - pre:q + post]))
+                        y.append("none")
             for _, w in wins:
                 X.append(features(w))
                 y.append(label)
