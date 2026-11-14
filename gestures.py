@@ -118,13 +118,15 @@ class Recordings:
         X, y = [], []
         for f in sorted(DATA.glob("*.npz")):
             label = f.stem.rsplit("_", 1)[0]
-            if label.startswith("pose_"):
-                continue
             d = np.load(f)
             if len(d["t"]) < RATE:
                 continue
-            if label == "none":
-                wins = peak_windows(d["t"], d["acc"], thresh=None)
+            if label == "none" or label.startswith("pose_"):
+                # everything that is not a gesture: a window every 0.3 s of normal movement
+                # and of the held poses (389 examples from the first real session)
+                label = "none"
+                pre, post = int(PRE_S * RATE), int(POST_S * RATE)
+                wins = [(q, d["acc"][q - pre:q + post]) for q in range(pre, len(d["acc"]) - post, int(0.3 * RATE))]
             else:
                 wins = peak_windows(d["t"], d["acc"], cue_times=list(d["cues"]))
             for _, w in wins:
@@ -170,7 +172,7 @@ def train():
 class LiveDetector:
     """Feed samples as they arrive; returns (label, prob) when a gesture is recognised."""
 
-    def __init__(self, min_prob=0.7, refractory_s=1.0):
+    def __init__(self, min_prob=0.6, refractory_s=1.0):
         import pickle
         self.clf = pickle.loads(MODEL.read_bytes())
         self.min_prob, self.refractory = min_prob, refractory_s
