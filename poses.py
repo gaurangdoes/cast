@@ -43,7 +43,10 @@ def _angle(a, b):
 class PoseTracker:
     def __init__(self, calibration=None):
         cal = calibration if calibration is not None else load_calibration()
-        self.refs = {name: _unit(p["gravity"]) for name, p in (cal.get("poses") or {}).items() if p.get("gravity")}
+        # only the three poses in use; older entries in the file were recorded with the band
+        # sitting differently on the wrist
+        self.refs = {name: _unit(p["gravity"]) for name, p in (cal.get("poses") or {}).items()
+                     if p.get("gravity") and name in ("mouth", "rest_table", "side")}
         self.g = None
         self.candidate, self.candidate_since = "moving", 0.0
         self.pose = "moving"
