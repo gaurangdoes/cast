@@ -260,7 +260,7 @@ function GestureLab({ lab, send, live }: { lab: Lab; send: (c: object) => void; 
 
       <div className="cal-sub">Voices: 40 s of each person talking alone, through the band. Wearer keeps the band where it normally is; others stand where they normally would.</div>
       <div className="lab-grid">
-        {[['wearer', 'Me (the wearer)'], ['other1', 'Person 2'], ['other2', 'Person 3']].map(([id, name]) => (
+        {[['wearer', 'Me (the wearer)'], ['other1', 'Person 2'], ['other2', 'Person 3'], ['other3', 'Person 4'], ['other4', 'Person 5']].map(([id, name]) => (
           <div key={id} className="lab-card">
             <div className="cal-step-title">{name}</div>
             <div className="lab-count">{lab.voice_counts?.[id] ?? 0} recording(s)</div>
