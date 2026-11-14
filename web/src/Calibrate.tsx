@@ -20,6 +20,7 @@ type Lab = {
   report: LabReport | null; live: boolean; detections: Record<string, number>
   last: { label: string; prob: number; at: number } | null; counts: Record<string, number>
   pose_report?: LabReport | null
+  voice_counts?: Record<string, number>
 }
 type Live = { gravity: number[] | null; gyro: number; rms_db: number | null; nearest: { pose: string; deg: number } | null; pose?: string | null; pose_raw?: [string, number] | null }
 
@@ -249,14 +250,24 @@ function GestureLab({ lab, send, live }: { lab: Lab; send: (c: object) => void; 
 
       {rec && (
         <div className={`lab-rec ${rec.phase}`}>
-          <div className="lab-rec-name">{rec.label === 'none' ? 'Normal movement' : rec.label.startsWith('pose_') ? POSES.find((g) => 'pose_' + g.id === rec.label)?.name : GESTURES.find((g) => g.id === rec.label)?.name}</div>
-          {rec.label === 'none' || rec.label.startsWith('pose_')
-            ? <div className="lab-rec-big">{rec.left}s</div>
+          <div className="lab-rec-name">{rec.label.startsWith('voice_') ? 'Voice · keep talking' : rec.label === 'none' ? 'Normal movement' : rec.label.startsWith('pose_') ? POSES.find((g) => 'pose_' + g.id === rec.label)?.name : GESTURES.find((g) => g.id === rec.label)?.name}</div>
+          {rec.label === 'none' || rec.label.startsWith('pose_') || rec.label.startsWith('voice_')
+            ? <div className="lab-rec-big">{rec.phase === 'ready' ? 'Get ready' : `${rec.left}s`}</div>
             : <div className="lab-rec-big">{rec.phase === 'ready' ? 'Get ready' : rec.phase === 'now' ? 'NOW' : `${rec.rep} / ${rec.reps}`}</div>}
           <div className="cal-hint">{rec.label === 'none' ? 'Talk with your hands, scratch, rest. No gestures.' : rec.label.startsWith('pose_') ? 'Hold the pose but keep varying it: angles, sit, stand.' : GESTURES.find((g) => g.id === rec.label)?.how}</div>
         </div>
       )}
 
+      <div className="cal-sub">Voices: 40 s of each person talking alone, through the band. Wearer keeps the band where it normally is; others stand where they normally would.</div>
+      <div className="lab-grid">
+        {[['wearer', 'Me (the wearer)'], ['other1', 'Person 2'], ['other2', 'Person 3']].map(([id, name]) => (
+          <div key={id} className="lab-card">
+            <div className="cal-step-title">{name}</div>
+            <div className="lab-count">{lab.voice_counts?.[id] ?? 0} recording(s)</div>
+            <button className="btn" disabled={busy || lab.live} onClick={() => send({ cmd: 'voice_record', label: id, seconds: 40 })}>Record 40 s</button>
+          </div>
+        ))}
+      </div>
       <div className="cal-sub">Poses: record 20 s each, changing it a little the whole time</div>
       <div className="lab-grid">
         {POSES.map((g) => (

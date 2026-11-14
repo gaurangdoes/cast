@@ -118,7 +118,7 @@ class Voices:
         return True
 
     def vote_wearer(self, speaker_id, yes):
-        if speaker_id is None:
+        if speaker_id is None or speaker_id < 0:      # never learn 'unknown' as the wearer
             return
         with self.lock:
             self.wearer_votes[speaker_id] = self.wearer_votes.get(speaker_id, 0) + (1 if yes else -1)

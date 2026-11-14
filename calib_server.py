@@ -195,8 +195,45 @@ class Calib:
             self.band.configure(motion=50, sensors="both")
         self.push_state()
 
+    # ---- voice lab: clean samples of each person through the band's own microphone
+
+    def voice_record(self, label, seconds):
+        if self.status != "connected" or self.lab["recording"] or self.active:
+            return
+        threading.Thread(target=self._voice_record, args=(label, seconds), daemon=True).start()
+
+    def _voice_record(self, label, seconds):
+        from vexo_open.audio import PcmDecoder
+        dec, chunks = PcmDecoder(), []
+        handler = lambda a: chunks.append(dec.feed(a))
+        try:
+            self.lab["recording"] = {"label": "voice_" + label, "rep": 0, "reps": 0, "phase": "ready", "left": seconds}
+            self.push_state()
+            who = "The wearer talks" if label == "wearer" else "The other person talks, the wearer stays silent"
+            self.say("%s for %d seconds. Keep talking the whole time." % (who, seconds))
+            time.sleep(4.5)
+            self.band.on("audio", handler)
+            self.band.configure(audio=True)
+            for left in range(seconds, 0, -1):
+                self.lab["recording"] = {"label": "voice_" + label, "rep": 0, "reps": 0, "phase": "go", "left": left}
+                self.push_state()
+                time.sleep(1)
+            self.band.configure(audio=False)
+            out = ROOT / "data" / "voices_lab"
+            out.mkdir(parents=True, exist_ok=True)
+            pcm = b"".join(chunks)
+            (out / ("%s_%d.pcm" % (label, int(time.time())))).write_bytes(pcm)
+            self.say("Done.")
+        finally:
+            self.lab["recording"] = None
+            self.push_state()
+
     def lab_state(self):
-        return dict(self.lab, counts=gestures.Recordings.counts())
+        vc = {}
+        for f in (ROOT / "data" / "voices_lab").glob("*.pcm"):
+            k = f.stem.rsplit("_", 1)[0]
+            vc[k] = vc.get(k, 0) + 1
+        return dict(self.lab, counts=gestures.Recordings.counts(), voice_counts=vc)
 
     # ---- band
 
@@ -391,6 +428,8 @@ class Calib:
                     self.reset()
                 elif cmd.get("cmd") == "lab_record":
                     self.lab_record(str(cmd.get("label")), int(cmd.get("reps", 10)))
+                elif cmd.get("cmd") == "voice_record":
+                    self.voice_record(str(cmd.get("label")), int(cmd.get("seconds", 40)))
                 elif cmd.get("cmd") == "lab_train":
                     threading.Thread(target=self.lab_train, daemon=True).start()
                 elif cmd.get("cmd") == "lab_live":
