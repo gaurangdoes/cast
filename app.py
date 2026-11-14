@@ -120,10 +120,10 @@ class Cast:
         self.band, self.screen, self.voice = band, screen, voice
         cal = load_calibration()
         self.poses = LearnedPoses() if gestures.POSE_MODEL.exists() else PoseTracker(cal)
-        # Fist / thumbs up did not hold up across arm positions (see README), so they are off
-        # unless CAST_GESTURES=1. Taps (band firmware) do the same jobs reliably.
-        use = os.environ.get("CAST_GESTURES") == "1" and gestures.MODEL.exists()
-        self.gest = gestures.LiveDetector(min_prob=0.8, refractory_s=2.5) if use else None
+        # Fist / thumbs up work in the arm positions they were recorded in (about 7 in 10 unseen
+        # reps), not in new ones. A fist only counts when the arm was still just before it.
+        use = os.environ.get("CAST_GESTURES", "1") == "1" and gestures.MODEL.exists()
+        self.gest = gestures.LiveDetector(min_prob=0.65, refractory_s=2.5) if use else None
         self.fast = self.gest is not None or isinstance(self.poses, LearnedPoses)
         self.paused, self.pause_started = False, 0.0
         self.unacked = None                   # (reminder, threading.Event) waiting for a thumbs up
@@ -390,6 +390,10 @@ class Cast:
         print("[gesture] %s (%.2f)" % (label, prob))
         self.screen.send("gesture", label=label, prob=prob)
         if label == "fist":
+            now = time.time()                     # the window ended ~0.9 s ago; look just before it
+            if self.poses.pose_during(now - 1.9, now - 1.3) == "moving":
+                print("[gesture] fist ignored: arm was moving")
+                return
             self.toggle_pause()
         elif label == "thumbs_up":
             self.acknowledge("Thumbs up")
