@@ -444,6 +444,22 @@ class Dextra:
                 runs[-1]["words"].append(w)
             else:
                 runs.append({"local": spk, "words": [w]})
+        # A piece under a second cannot be told apart by voice, and the speaker tracker sometimes
+        # flips for a word or two mid-sentence ("Can you / actually, / turn the timer on"). Fold
+        # such pieces into the neighbour they sit closest to, so the sentence is judged whole.
+        def length(r):
+            return r["words"][-1]["end"] - r["words"][0]["start"]
+        while len(runs) > 1:
+            i = min(range(len(runs)), key=lambda k: length(runs[k]))
+            if length(runs[i]) >= 1.0:
+                break
+            before = runs[i]["words"][0]["start"] - runs[i - 1]["words"][-1]["end"] if i > 0 else 1e9
+            after = runs[i + 1]["words"][0]["start"] - runs[i]["words"][-1]["end"] if i + 1 < len(runs) else 1e9
+            if before <= after:
+                runs[i - 1]["words"] += runs[i]["words"]
+            else:
+                runs[i + 1]["words"] = runs[i]["words"] + runs[i + 1]["words"]
+            del runs[i]
         out = []
         for r in runs:
             start, end = r["words"][0]["start"], r["words"][-1]["end"]
