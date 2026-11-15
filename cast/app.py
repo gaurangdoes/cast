@@ -792,6 +792,15 @@ class Dextra:
                 self.screen.send("names", names={str(k): v for k, v in self.voices.names.items()})
         if vid is None:
             return
+        was = seg.get("speaker")
+        if was is not None and was >= 0 and was != vid:      # it had been given to someone else: forget that
+            try:
+                n = self.voices.unlearn(pcm, was)
+                if n:
+                    print("[voices] dropped %d learned example(s) of %s that were really this voice" % (
+                        n, "you" if was == self.voices.wearer_id else self.voices.names.get(was)))
+            except Exception as e:  # noqa: BLE001
+                print("[voices] could not unlearn:", e)
         seg["speaker"], seg["is_wearer"] = vid, vid == self.voices.wearer_id
         seg["name"] = self.voices.names.get(vid)
         self.screen.send("relabel", seg=seg_id, speaker=vid, is_wearer=seg["is_wearer"], name=seg["name"])

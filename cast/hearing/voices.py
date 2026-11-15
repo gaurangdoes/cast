@@ -171,6 +171,24 @@ class Voices:
             self.plain.setdefault(vid, []).append(plain)
         return vid
 
+    def unlearn(self, pcm16, vid):
+        """The user said this stretch was NOT vid. Drop the examples Cast had learned for vid that
+        are this same audio or near copies of it (it adds clear, long lines as examples by itself,
+        so a look-alike voice can end up among them). Enrolment recordings are never touched."""
+        if vid not in self.enrolled or len(pcm16) / (SAMPLE_RATE * 2) < 1.0:
+            return 0
+        e = [self._unit(v - mu) for v, mu in zip(self.embed_all(pcm16), self.mu)]
+        with self.lock:
+            base = self.base_counts.get(vid, 0)
+            exs, pls = self.enrolled[vid], self.plain.get(vid, [])
+            drop = [i for i in range(base, len(exs))
+                    if float(np.mean([float(e[m] @ exs[i][m]) for m in range(len(e))])) >= 0.75]
+            for i in reversed(drop):
+                del exs[i]
+                if i < len(pls):
+                    del pls[i]
+        return len(drop)
+
     def discover(self, pcm16):
         """A long stretch (5 s+) from a voice that matches nobody enrolled becomes a new person.
         Measured on this band with 5 s clips: a known voice scores 0.61+ against itself (lowest
