@@ -441,6 +441,7 @@ class Cast:
             # Nemotron only decides where the speaker changes; who it is comes from this
             # stretch's own audio, never from the context before it
             vid, sim = self.voices.identify(self.audio.slice(start - 0.05, end + 0.05))
+            stranger = vid is not None and bool(getattr(self.voices, "last_stranger", False))
             if self.stream is not None and r["local"] is not None:
                 # streaming ids mean the same person all session: remember which voice each one
                 # turned out to be, and use that when this stretch is too short to tell
@@ -462,6 +463,8 @@ class Cast:
                 continuing = t is not None and r is runs[0] and gap < 0.3
             else:
                 continuing = t is not None and r is runs[0] and gap < 0.7
+            if stranger:
+                continuing = False                   # a voice Cast has not met never inherits the last speaker's name
             if continuing and not changed:
                 jv, js = self.voices.identify(self.audio.slice(max(t["start"], end - 8.0), end + 0.05))
                 if jv is not None and jv >= 0:
@@ -475,9 +478,9 @@ class Cast:
                 self.turn = {"start": start, "end": end, "vid": vid if vid is not None else UNKNOWN}
             if vid is None:
                 vid = UNKNOWN
-            if vid == UNKNOWN and end - self.turn["start"] >= 5.0 and not self.turn.get("tried"):
-                self.turn["tried"] = True
-                # five seconds of someone nobody recognises: a new person joins the conversation
+            if vid == UNKNOWN and end - self.turn["start"] >= self.turn.get("try_at", 3.0):
+                self.turn["try_at"] = 5.0 if self.turn.get("try_at", 3.0) < 5.0 else 1e9
+                # three seconds of a clear stranger, or five of someone nobody recognises: a new person
                 t0 = self.audio_t0 or time.time()
                 level = self.loud.level_during(t0 + self.turn["start"], t0 + end)
                 if level is not None and level - getattr(self, "db_shift", 0) > NEW_PERSON_DB:   # quieter than the wearer ever is
@@ -491,7 +494,7 @@ class Cast:
             self.last_run_end = end
             vid = self.voices.resolve(vid)
             self.last_voice = vid
-            out.append({"voice": vid, "sim": sim, "start": start, "end": end,
+            out.append({"voice": vid, "sim": sim, "start": start, "end": end, "stranger": stranger and vid == UNKNOWN,
                         "text": " ".join(w["text"] for w in r["words"])})
         return out
 
@@ -509,14 +512,20 @@ class Cast:
         # Who is being talked to? Three signals, measured on this band: loudness at the mic
         # (12 dB at the mouth, 21 resting, 27 someone else), the wrist pose, and whose voice it is.
         loud = rms is not None and rms <= RAISED_DB                 # anyone speaking right into the band
-        if vid < 0 and loud and self.voices.wearer_id is not None:
+        stranger = bool(run.get("stranger"))                        # sounds like nobody Cast knows
+        if vid < 0 and loud and self.voices.wearer_id is not None and not stranger:
             vid = self.voices.wearer_id       # undecided voice, but this loud at the band is the wearer
+        if stranger and loud:
+            print("[command] refused, not a voice Cast knows: %s" % run["text"][:70])
+            self.card(uuid.uuid4().hex[:8], "refused", "command", run["text"][:80],
+                      reason="That was not your voice. Cast only takes instructions from its wearer.")
+            loud = False
         mine = vid == self.voices.wearer_id                         # recognised as the wearer
         near = rms is not None and rms <= NEAR_DB and pose == "mouth" and mine   # softer, wrist raised
         with self.cmd_lock:
             # still finishing a slow command: the wearer, or an undecided voice that is close to the band
             pending_now = self.pending_cmd is not None
-            ongoing = pending_now and (
+            ongoing = pending_now and not stranger and (
                 mine or (vid < 0 and rms is not None and rms <= NEAR_DB))
         # the wearer's own voice, fairly loud, but the pose is not clearly raised: treat it as a
         # command only if it turns out to be something Cast can do (decided after Gemini reads it)

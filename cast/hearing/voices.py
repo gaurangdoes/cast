@@ -16,6 +16,7 @@ from ..paths import DATA
 
 SAME_VOICE = 0.42        # cosine similarity above this: same person (measured: same voice 0.8-0.9 on long speech)
 NEW_SPEAKER_SECONDS = 1.5  # need at least this much audio to start a new speaker
+STRANGER_BELOW = 0.40        # plain similarity under this to everyone known: a voice Cast has not met
 NEW_PERSON_BELOW = 0.55    # 5 s of speech less similar than this to every known voice: someone new
 UNKNOWN = -1               # heard, but too short to say who
 MERGE_AT = 0.6           # two clusters this similar are the same person
@@ -174,13 +175,14 @@ class Voices:
         """A long stretch (5 s+) from a voice that matches nobody enrolled becomes a new person.
         Measured on this band with 5 s clips: a known voice scores 0.61+ against itself (lowest
         10%), a never-heard voice 0.56 or less against anyone (highest 10%)."""
-        if not self.enrolled or len(pcm16) / (SAMPLE_RATE * 2) < 5.0:
+        seconds = len(pcm16) / (SAMPLE_RATE * 2)
+        if not self.enrolled or seconds < 3.0:
             return None
         embs = self.embed_all(pcm16)
         raw = [self._unit(v) for v in embs]
         best = max(float(np.mean([max(float(raw[m] @ ex[m]) for ex in exs) for m in range(len(raw))]))
                    for exs in self.plain.values())
-        if best >= NEW_PERSON_BELOW:
+        if best >= (NEW_PERSON_BELOW if seconds >= 5.0 else STRANGER_BELOW):   # under 5 s: only a clear stranger
             return None
         with self.lock:
             nid = max(self.enrolled) + 1
@@ -197,7 +199,16 @@ class Voices:
         seconds = len(pcm16) / (SAMPLE_RATE * 2)
         if seconds < 1.0:
             return None, 0.0
-        e = [self._unit(v - mu) for v, mu in zip(self.embed_all(pcm16), self.mu)]
+        embs = self.embed_all(pcm16)
+        e = [self._unit(v - mu) for v, mu in zip(embs, self.mu)]
+        raw = [self._unit(v) for v in embs]
+        with self.lock:
+            known = [list(exs) for exs in self.plain.values() if exs]
+        # how much this sounds like ANYONE Cast knows. Measured on 225 live lines (14 Nov): lines from
+        # the two enrolled people scored 0.41+ (lowest 10%), a third person's lines 0.39 or less (highest 10%)
+        self.last_plain = max((float(np.mean([max(float(raw[m] @ ex[m]) for ex in exs) for m in range(len(raw))]))
+                               for exs in known), default=1.0)
+        self.last_stranger = self.last_plain < STRANGER_BELOW
         # per person: for each model, the best match among that person's examples; then average the models
         with self.lock:                                # a correction on the screen can add a person meanwhile
             people = [(i, list(exs)) for i, exs in self.enrolled.items()]
@@ -208,11 +219,13 @@ class Voices:
         # commit only on a clear lead. Checked on 243 lines captured live on 14 Nov: with a lead of
         # 0.15-0.20 the closest voice was the right one on 23 of 24 lines; at 0.10-0.15 only 15 of 18
         need = 0.15 if seconds >= 1.5 else 0.22
-        if not loose and margin >= 0.30 and seconds >= 2.5 and len(self.enrolled[scores[0][1]]) < 14:
+        if not loose and not self.last_stranger and margin >= 0.30 and seconds >= 2.5 and len(self.enrolled[scores[0][1]]) < 14:
             self.enrolled[scores[0][1]].append(e)      # a clear, long clip: one more example of this voice
-            self.plain.setdefault(scores[0][1], []).append([self._unit(v) for v in self.embed_all(pcm16)])
+            self.plain.setdefault(scores[0][1], []).append(raw)
         if loose:                                      # the closest voice and its lead, whatever the lead is
             return scores[0][1], margin
+        if self.last_stranger:                         # sounds like nobody enrolled: never pin it on the closest
+            return UNKNOWN, margin
         return (scores[0][1] if margin >= need else UNKNOWN), margin
 
     def identify(self, pcm16):
