@@ -828,6 +828,11 @@ class Dextra:
         n = 0
         for s in segs:
             if s["id"] in moved and s is not taught:
+                if s["a1"] - s["a0"] >= 1.5:             # a line long enough to learn from: one more example of this voice
+                    try:
+                        self.voices.teach(self.audio.slice(s["a0"] - 0.05, s["a1"] + 0.05), vid=vid)
+                    except Exception as e:  # noqa: BLE001
+                        print("[voices] could not learn from a look-back line:", e)
                 s["speaker"], s["is_wearer"] = vid, vid == self.voices.wearer_id
                 s["name"] = self.voices.names.get(vid)
                 self.screen.send("relabel", seg=s["id"], speaker=vid, is_wearer=s["is_wearer"], name=s["name"])

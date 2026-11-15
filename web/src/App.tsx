@@ -218,7 +218,7 @@ function SpeakerName({ label, speaker, segId, editable, known, onRename, onAssig
   if (!editing) {
     return (
       <button type="button" className={`who who-edit${unknown ? ' who-ask' : ''}`}
-        title={unknown ? 'Click to say who this was' : 'Click to rename this person'}
+        title={unknown ? 'Click to say who this was' : 'Click to correct who said this, or rename them'}
         onClick={() => { closed.current = false; setValue(unknown ? '' : label); setEditing(true) }}>
         {label}{unknown && <span className="who-hint"> · who was this?</span>}
       </button>
@@ -246,10 +246,19 @@ function SpeakerName({ label, speaker, segId, editable, known, onRename, onAssig
       </span>
     )
   }
+  // a named line: say it was really someone else (one click), or rename this person (the field)
+  const others = segId ? ['You', ...known.filter((k) => k !== label)] : []
   return (
-    <input className="who-input" autoFocus value={value} maxLength={30} aria-label="Name for this person"
-      onChange={(e) => setValue(e.target.value)} onBlur={save}
-      onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { closed.current = true; setEditing(false) } }} />
+    <span className="who-pick" role="group" aria-label="Correct who said this">
+      {others.map((k) => (
+        <button key={k} type="button" className="who-chip" onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { closed.current = true; onAssign(segId!, k === 'You' ? 'me' : k); setEditing(false) }}>{k}</button>
+      ))}
+      <input className="who-input who-new" autoFocus value={value} maxLength={30} aria-label="Name for this person"
+        title="Rename this person everywhere"
+        onChange={(e) => setValue(e.target.value)} onBlur={save}
+        onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { closed.current = true; setEditing(false) } }} />
+    </span>
   )
 }
 
