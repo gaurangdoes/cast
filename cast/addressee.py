@@ -1,8 +1,8 @@
-"""Was this line said to Cast? A small model trained on the wearer's own labelled examples.
+"""Was this line said to Dextra? A small model trained on the wearer's own labelled examples.
 
 The hand-written gate in app.py (loudness, wrist pose, whose voice) logs every line it sees to
 data/addressee_log.jsonl. During a labelling session, started from the screen's Details area,
-each line also gets a label: 1 in a "to Cast" session (everything the wearer says is a command
+each line also gets a label: 1 in a "to Dextra" session (everything the wearer says is a command
 or a question), 0 in a "conversation" session (ordinary talk, wrist raised or not).
 
     .venv/bin/python -m cast.addressee        # train on the labelled lines, compare with the rules
@@ -45,7 +45,7 @@ def wording(text):
     return {
         "w_request": float(any(r in t for r in REQUESTS)),
         "w_question": float("?" in t),
-        "w_cast": float("cast" in words),
+        "w_cast": float("cast" in words or "dextra" in words),
         "w_imperative": float(bool(words) and words[0] in IMPERATIVES),
         "w_you": float("you" in words),
         "w_me": float("me" in words or "my" in words),
@@ -116,7 +116,7 @@ def train(log_path=None, model_path=None, quiet=False):
     report = {"lines": len(rows), "to_cast": int((y == 1).sum()) if len(rows) else 0,
               "conversation": int((y == 0).sum()) if len(rows) else 0}
     if len(rows) < 30 or report["to_cast"] < 10 or report["conversation"] < 10:
-        report["error"] = ("Not enough labelled lines yet: need at least 10 said to Cast and 10 of conversation "
+        report["error"] = ("Not enough labelled lines yet: need at least 10 said to Dextra and 10 of conversation "
                            "(have %d and %d)." % (report["to_cast"], report["conversation"]))
         if not quiet:
             print(report["error"])
@@ -147,7 +147,7 @@ def train(log_path=None, model_path=None, quiet=False):
     model_path.write_bytes(pickle.dumps({"model": clf, "features": list(FEATURES), "trained": time.time(),
                                          "lines": len(rows)}))
     if not quiet:
-        print("Labelled lines: %d said to Cast, %d of conversation. Tested on %s." % (
+        print("Labelled lines: %d said to Dextra, %d of conversation. Tested on %s." % (
             report["to_cast"], report["conversation"], report["tested_on"]))
         for name in ("model", "rules"):
             s = report[name]
@@ -166,7 +166,7 @@ def available(model_path=None):
 
 
 def predict(row, model_path=None):
-    """Probability that this line was said to Cast, or None if there is no usable model."""
+    """Probability that this line was said to Dextra, or None if there is no usable model."""
     path = model_path or MODEL
     key = str(path)
     try:

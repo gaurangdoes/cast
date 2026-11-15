@@ -111,7 +111,7 @@ h2 { font-family: var(--mono); font-weight: 500; font-size: 12px; letter-spacing
 .line.unknown .avatar { background: transparent; border: 1.5px dashed var(--line); color: var(--faint); font-size: .95rem; }
 .line.unknown .who { font-weight: 500; }
 .line.unknown .text { color: var(--muted); font-size: 1.15rem; }
-/* Spoken to Cast */
+/* Spoken to Dextra */
 .line.to-cast { background: var(--accent-soft); box-shadow: inset 4px 0 0 var(--accent); padding-top: .7rem; padding-bottom: .7rem; margin-top: .6rem; margin-bottom: .15rem; }
 .line.to-cast .text { font-weight: 500; }
 .to-cast-label { font-family: var(--mono); font-size: .7rem; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: #fff; background: var(--accent); border-radius: 999px; padding: .16rem .55rem; }
@@ -306,7 +306,7 @@ h2 { font-family: var(--mono); font-weight: 500; font-size: 12px; letter-spacing
 .who-hint { font-weight: 400; font-size: .85em; opacity: .8; }
 .who-ask:hover .who-hint { text-decoration: underline; }
 
-/* lines spoken to Cast: a quiet outlined row, no bar */
+/* lines spoken to Dextra: a quiet outlined row, no bar */
 .line.to-cast { background: var(--inset); box-shadow: none; border: 1px solid var(--line); border-radius: 10px; }
 .line.to-cast .text { font-weight: 400; }
 .to-cast-label { font-family: var(--body); font-size: 11px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }

@@ -3,7 +3,7 @@
 Each finished sentence from Deepgram gets its slice of the band's audio run through
 SpeechBrain's ECAPA speaker model (CPU). The resulting voiceprint is compared with the
 voices heard so far: close enough to one of them -> same person, otherwise a new speaker.
-Sentences spoken with the wrist raised and clearly loud teach Cast which voice is the wearer.
+Sentences spoken with the wrist raised and clearly loud teach Dextra which voice is the wearer.
 """
 import json
 import os
@@ -16,7 +16,7 @@ from ..paths import DATA
 
 SAME_VOICE = 0.42        # cosine similarity above this: same person (measured: same voice 0.8-0.9 on long speech)
 NEW_SPEAKER_SECONDS = 1.5  # need at least this much audio to start a new speaker
-STRANGER_BELOW = 0.40        # plain similarity under this to everyone known: a voice Cast has not met
+STRANGER_BELOW = 0.40        # plain similarity under this to everyone known: a voice Dextra has not met
 NEW_PERSON_BELOW = 0.55    # 5 s of speech less similar than this to every known voice: someone new
 UNKNOWN = -1               # heard, but too short to say who
 MERGE_AT = 0.6           # two clusters this similar are the same person
@@ -204,7 +204,7 @@ class Voices:
         raw = [self._unit(v) for v in embs]
         with self.lock:
             known = [list(exs) for exs in self.plain.values() if exs]
-        # how much this sounds like ANYONE Cast knows. Measured on 225 live lines (14 Nov): lines from
+        # how much this sounds like ANYONE Dextra knows. Measured on 225 live lines (14 Nov): lines from
         # the two enrolled people scored 0.41+ (lowest 10%), a third person's lines 0.39 or less (highest 10%)
         self.last_plain = max((float(np.mean([max(float(raw[m] @ ex[m]) for ex in exs) for m in range(len(raw))]))
                                for exs in known), default=1.0)

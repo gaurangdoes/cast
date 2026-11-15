@@ -119,4 +119,4 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => { timers.forEach((t) => { clearInterval(t); clearTimeout(t) }); console.log('client disconnected') })
 })
-console.log(`mock Cast server on ws://localhost:${PORT}`)
+console.log(`mock Dextra server on ws://localhost:${PORT}`)

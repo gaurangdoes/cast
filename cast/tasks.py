@@ -1,4 +1,4 @@
-"""Tasks: something Cast does later, set by voice.
+"""Tasks: something Dextra does later, set by voice.
 
 A task is a trigger plus an action.
   trigger  time      at a moment                      {"type": "time", "at": epoch}

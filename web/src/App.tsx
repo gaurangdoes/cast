@@ -71,7 +71,7 @@ export default function App() {
       {state.gesture && <GestureToast key={state.gesture.at} label={state.gesture.label} />}
       <div className={`app${state.micOn ? '' : ' mic-off'}`}>
         <header className="topbar">
-          <div className="brand">Cast</div>
+          <div className="brand">Dextra</div>
           <div className="tagline">Your wristband assistant</div>
           <div className="topbar-right">
             <ConnPill conn={state.conn} />
@@ -139,10 +139,10 @@ function LabellingBar({ session, onStop }: { session: { mode: 'cast' | 'chat'; u
   const left = Math.max(0, Math.ceil(session.until - now))
   return (
     <div className="labelling" role="status">
-      <b>{session.mode === 'cast' ? 'Recording examples: talk TO Cast' : 'Recording examples: ordinary conversation'}</b>
+      <b>{session.mode === 'cast' ? 'Recording examples: talk TO Dextra' : 'Recording examples: ordinary conversation'}</b>
       <span>{session.mode === 'cast'
-        ? 'Give commands and ask questions the way you normally would: at your mouth, softer, slower. Cast will not act.'
-        : 'Just talk, with your wrist up and down, gesturing. Nothing here is meant for Cast.'}</span>
+        ? 'Give commands and ask questions the way you normally would: at your mouth, softer, slower. Dextra will not act.'
+        : 'Just talk, with your wrist up and down, gesturing. Nothing here is meant for Dextra.'}</span>
       <span className="labelling-left">{left}s</span>
       <button type="button" className="btn" onClick={onStop}>Stop</button>
     </div>
@@ -156,7 +156,7 @@ function StatusPanel(p: {
 }) {
   const state = !p.micOn ? 'off' : p.raised ? 'raised' : 'ambient'
   const title = state === 'off' ? 'Microphone off' : state === 'raised' ? 'Wrist raised' : 'Listening in the background'
-  const sub = state === 'off' ? 'Nothing is being heard' : state === 'raised' ? 'Talking to Cast' : 'Remembering, not acting'
+  const sub = state === 'off' ? 'Nothing is being heard' : state === 'raised' ? 'Talking to Dextra' : 'Remembering, not acting'
   const level = p.micOn ? p.levelPct : 0
   return (
     <section className="card-panel status-panel">
@@ -180,9 +180,9 @@ function StatusPanel(p: {
       {p.details && (
         <div className="teach">
           <h2>Teach the command gate</h2>
-          <p>Record examples, then run <code>python -m cast.addressee</code>. Cast does not act while recording.</p>
+          <p>Record examples, then run <code>python -m cast.addressee</code>. Dextra does not act while recording.</p>
           <div className="teach-buttons">
-            <button type="button" className="btn" disabled={!!p.labelling} onClick={() => p.onLabel('cast')}>To Cast · 90 s</button>
+            <button type="button" className="btn" disabled={!!p.labelling} onClick={() => p.onLabel('cast')}>To Dextra · 90 s</button>
             <button type="button" className="btn" disabled={!!p.labelling} onClick={() => p.onLabel('chat')}>Conversation · 120 s</button>
           </div>
         </div>
@@ -191,7 +191,7 @@ function StatusPanel(p: {
       <div className="howto">
         <h2>How to use it</h2>
         <ul>
-          <li><span className="howto-icon"><Icon name="raise" /></span><div><b>Raise your wrist</b><span>to talk to Cast</span></div></li>
+          <li><span className="howto-icon"><Icon name="raise" /></span><div><b>Raise your wrist</b><span>to talk to Dextra</span></div></li>
           <li><span className="howto-icon"><Icon name="pause" /></span><div><b>Double-tap or fist</b><span>to pause the microphone</span></div></li>
           <li><span className="howto-icon"><Icon name="tap" /></span><div><b>Tap</b><span>to acknowledge</span></div></li>
         </ul>
@@ -276,7 +276,7 @@ function TranscriptPanel({ lines, partial, names, details, micOn, onRename, onAs
             <div className="empty-icon"><Icon name={micOn ? 'ear' : 'micOff'} /></div>
             <div className="empty-title">{micOn ? 'Waiting for someone to speak' : 'The microphone is off'}</div>
             <p>{micOn
-              ? 'Everything the band hears appears here with who said it. Raise your wrist to give Cast a command.'
+              ? 'Everything the band hears appears here with who said it. Raise your wrist to give Dextra a command.'
               : 'Double-tap or close your fist to start listening again.'}</p>
           </div>
         )}
@@ -293,7 +293,7 @@ function TranscriptPanel({ lines, partial, names, details, micOn, onRename, onAs
                   <div className="line-head">
                     <SpeakerName label={who.label} speaker={m.speaker} segId={m.id} onRename={onRename} onAssign={onAssign}
                       known={Object.values(names)} editable={!m.is_wearer} />
-                    {toCast && <span className="to-cast-label">to Cast</span>}
+                    {toCast && <span className="to-cast-label">to Dextra</span>}
                   </div>
                 )}
                 <div className="text">{m.text}</div>
@@ -403,12 +403,12 @@ function ActivityPanel({ cards, names }: { cards: Card[]; names: Record<string, 
     <div className="card-panel activity-panel">
       <div className="panel-head">
         <h2>Activity</h2>
-        <span className="panel-note">What Cast did</span>
+        <span className="panel-note">What Dextra did</span>
       </div>
       <div className="cards">
         {cards.length === 0 && (
           <div className="empty">
-            Nothing yet. Raise your wrist to your mouth and ask Cast for something. What it does shows up here.
+            Nothing yet. Raise your wrist to your mouth and ask Dextra for something. What it does shows up here.
           </div>
         )}
         {cards.map((c) => {

@@ -64,7 +64,7 @@ const STEPS: Step[] = [
   {
     id: 'move', group: 'The fist', title: 'Normal movement',
     say: 'Move around the way you normally would for a minute. No fists.',
-    detail: 'Type, pick things up, gesture while you talk, walk a few steps. This teaches Cast what is not a fist.',
+    detail: 'Type, pick things up, gesture while you talk, walk a few steps. This teaches Dextra what is not a fist.',
     button: 'Record 60 seconds', recLabel: 'none',
     done: (l) => n(l, 'none') >= 1, run: (s) => s({ cmd: 'lab_record', label: 'none', reps: 60 }),
   },
@@ -84,7 +84,7 @@ const STEPS: Step[] = [
   },
   {
     id: 'train', group: 'The fist', title: 'Train',
-    say: 'Cast learns your poses and your fist from what you just recorded.',
+    say: 'Dextra learns your poses and your fist from what you just recorded.',
     detail: 'Takes a few seconds. The result shows how often it got each one right on examples it had not seen.',
     button: 'Train',
     done: (l) => l.report?.accuracy != null && l.pose_report?.accuracy != null,
@@ -111,14 +111,14 @@ const STEPS: Step[] = [
   {
     id: 'voice_me', group: 'Voices', title: 'Your voice, arm at your side', optional: true,
     say: 'Talk for 40 seconds with your arm hanging at your side.',
-    detail: 'Cast has your voice at your mouth and resting. This adds the third way it hears you.',
+    detail: 'Dextra has your voice at your mouth and resting. This adds the third way it hears you.',
     button: 'Record 40 seconds', recLabel: 'voice_wearer',
     done: (l) => v(l, 'wearer') >= 3, run: (s) => s({ cmd: 'voice_record', label: 'wearer', seconds: 40 }),
   },
   {
     id: 'voice_other', group: 'Voices', title: 'The other person, once more', optional: true,
     say: 'They talk for 40 seconds from where they would normally stand. You stay silent.',
-    detail: 'Cast has one recording of them. A second makes their label steadier.',
+    detail: 'Dextra has one recording of them. A second makes their label steadier.',
     button: 'Record 40 seconds', recLabel: 'voice_other1',
     done: (l) => v(l, 'other1') >= 2, run: (s) => s({ cmd: 'voice_record', label: 'other1', seconds: 40 }),
   },
@@ -173,7 +173,7 @@ export default function Setup() {
   return (
     <div className="setup">
       <header className="setup-top">
-        <div className="brand">Cast <span className="setup-sub">Setup</span></div>
+        <div className="brand">Dextra <span className="setup-sub">Setup</span></div>
         <div className="setup-top-right">
           {connected && <span className="setup-progress">{doneCount} of {STEPS.length} done</span>}
           <a className="setup-link" href="#calibrate-advanced">All calibration tools</a>
@@ -292,7 +292,7 @@ function TrainResult({ lab }: { lab: Lab }) {
       {rows.map(([k, val, ok]) => (
         <div key={k} className={`setup-row ${ok ? 'ok' : 'warn'}`}><span>{k}</span><b>{val}</b></div>
       ))}
-      <p className="setup-detail">Each number is how often Cast was right on examples it had not trained on.</p>
+      <p className="setup-detail">Each number is how often Dextra was right on examples it had not trained on.</p>
     </div>
   )
 }
@@ -331,7 +331,7 @@ function Finish({ lab, live, send }: { lab: Lab; live: Live | null; send: (c: ob
           <div><div className="setup-eyebrow">Fists seen</div><div className="setup-livebig">{lab.detections?.fist ?? 0}</div></div>
         </div>
       )}
-      <p className="setup-detail">When you are happy, tell Claude it is done. Cast is restarted from the terminal, not from this page.</p>
+      <p className="setup-detail">When you are happy, tell Claude it is done. Dextra is restarted from the terminal, not from this page.</p>
     </section>
   )
 }

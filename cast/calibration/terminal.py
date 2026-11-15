@@ -1,4 +1,4 @@
-"""Calibration recorder for Cast.
+"""Calibration recorder for Dextra.
 
 Walks you through each wrist pose and a few talking tests, records what the band
 sees, and saves the numbers to data/calibration.json. The pose classifier and the

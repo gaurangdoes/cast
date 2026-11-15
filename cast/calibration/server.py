@@ -4,7 +4,7 @@
 
 The page walks you through each step with a Record button and shows live readings from
 the band. Every recorded step is saved to data/calibration.json straight away, so you can
-redo any single step. Close this (Ctrl+C) before starting Cast: one program per band.
+redo any single step. Close this (Ctrl+C) before starting Dextra: one program per band.
 """
 import argparse
 import asyncio

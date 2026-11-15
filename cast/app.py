@@ -1,4 +1,4 @@
-"""Cast: the main program. One process owns the band.
+"""Dextra: the main program. One process owns the band.
 
     .venv/bin/python -m cast 42           # your band number
     .venv/bin/python -m cast --sim        # pretend band; plays the kit's sample speech
@@ -120,7 +120,7 @@ class Screen:
 
 class Voice:
     """Spoken replies in a Gemini voice (gemini-3.8-flash-lite-tts, about 1.6 s to generate),
-    falling back to the Mac's built-in voice if that fails or is slow. While Cast talks, speech
+    falling back to the Mac's built-in voice if that fails or is slow. While Dextra talks, speech
     the band hears is ignored so it does not transcribe itself. Replies play one at a time."""
     MODEL = os.environ.get("CAST_TTS_MODEL", "gemini-3.8-flash-lite-tts")
     NAME = os.environ.get("CAST_TTS_VOICE", "Kore")
@@ -236,11 +236,11 @@ class Voice:
             path.write_bytes(bytes(got))
 
     def speaking(self, t_start, t_end):
-        """Did this stretch of heard speech overlap Cast's own voice?"""
+        """Did this stretch of heard speech overlap Dextra's own voice?"""
         return t_end >= self.spoke_from and t_start <= self.busy_until
 
 
-class Cast:
+class Dextra:
     def __init__(self, band, screen, voice):
         self.band, self.screen, self.voice = band, screen, voice
         cal = load_calibration()
@@ -290,7 +290,7 @@ class Cast:
         self.last_voice = None
         self.last_run_end = None
         self.arm = deque(maxlen=200)                 # (time, ax, ay, az) about 20 a second: was the arm steady?
-        # "was this said to Cast?": the trained model if there is one (python -m cast.addressee), else the rules
+        # "was this said to Dextra?": the trained model if there is one (python -m cast.addressee), else the rules
         self.model_gate = os.environ.get("CAST_ADDRESSEE") != "rules" and addressee.available()
         print("Command gate: %s" % ("trained model (data/addressee_model.pkl)" if self.model_gate
                                     else "hand-written rules (no trained model yet)"
@@ -394,7 +394,7 @@ class Cast:
         try:
             t0 = self.audio_t0 or time.time()
             if self.voice.speaking(t0 + words[0]["start"], t0 + words[-1]["end"]):
-                return                               # Cast's own spoken reply
+                return                               # Dextra's own spoken reply
             for run in self.split_by_speaker(words):
                 self.handle_run(run)
         except Exception:  # noqa: BLE001 - an error here must be seen, and must not stop the worker
@@ -464,7 +464,7 @@ class Cast:
             else:
                 continuing = t is not None and r is runs[0] and gap < 0.7
             if stranger:
-                continuing = False                   # a voice Cast has not met never inherits the last speaker's name
+                continuing = False                   # a voice Dextra has not met never inherits the last speaker's name
             if continuing and not changed:
                 jv, js = self.voices.identify(self.audio.slice(max(t["start"], end - 8.0), end + 0.05))
                 if jv is not None and jv >= 0:
@@ -502,7 +502,7 @@ class Cast:
         t0 = self.audio_t0 or time.time()
         start, end = t0 + run["start"], t0 + run["end"]
         if self.voice.speaking(start, end):
-            return                                   # that was Cast's own voice
+            return                                   # that was Dextra's own voice
         pose = self.poses.pose_during(start, end)
         measured_pose, raised_angle = pose, self.poses.angle_to("mouth", start, end)
         rms = self.loud.level_during(start, end)
@@ -512,13 +512,13 @@ class Cast:
         # Who is being talked to? Three signals, measured on this band: loudness at the mic
         # (12 dB at the mouth, 21 resting, 27 someone else), the wrist pose, and whose voice it is.
         loud = rms is not None and rms <= RAISED_DB                 # anyone speaking right into the band
-        stranger = bool(run.get("stranger"))                        # sounds like nobody Cast knows
+        stranger = bool(run.get("stranger"))                        # sounds like nobody Dextra knows
         if vid < 0 and loud and self.voices.wearer_id is not None and not stranger:
             vid = self.voices.wearer_id       # undecided voice, but this loud at the band is the wearer
         if stranger and loud:
-            print("[command] refused, not a voice Cast knows: %s" % run["text"][:70])
+            print("[command] refused, not a voice Dextra knows: %s" % run["text"][:70])
             self.card(uuid.uuid4().hex[:8], "refused", "command", run["text"][:80],
-                      reason="That was not your voice. Cast only takes instructions from its wearer.")
+                      reason="That was not your voice. Dextra only takes instructions from its wearer.")
             loud = False
         mine = vid == self.voices.wearer_id                         # recognised as the wearer
         near = rms is not None and rms <= NEAR_DB and pose == "mouth" and mine   # softer, wrist raised
@@ -528,7 +528,7 @@ class Cast:
             ongoing = pending_now and not stranger and (
                 mine or (vid < 0 and rms is not None and rms <= NEAR_DB))
         # the wearer's own voice, fairly loud, but the pose is not clearly raised: treat it as a
-        # command only if it turns out to be something Cast can do (decided after Gemini reads it)
+        # command only if it turns out to be something Dextra can do (decided after Gemini reads it)
         soft = (not loud and not near and not ongoing and vid == self.voices.wearer_id
                 and rms is not None and rms <= SOFT_DB)
         # What the gate knew when it decided, kept (without audio) so a model can be trained on it.
@@ -540,13 +540,13 @@ class Cast:
                "rule": {"loud": bool(loud), "near": bool(near), "soft": bool(soft), "ongoing": bool(ongoing),
                         "to_cast": bool(loud or near or ongoing or soft)}}
         prob = None
-        if self.model_gate and not loud:             # speech right at the band is always to Cast
+        if self.model_gate and not loud:             # speech right at the band is always to Dextra
             try:
                 prob = addressee.predict(row)
             except Exception as e:  # noqa: BLE001
                 print("[gate] model failed, using the rules:", e)
             if prob is not None:
-                if voice_kind == "other":            # a recognised other person never commands Cast
+                if voice_kind == "other":            # a recognised other person never commands Dextra
                     near = ongoing = soft = False
                 else:
                     near, soft, ongoing = prob >= 0.75, 0.5 <= prob < 0.75, False
@@ -566,7 +566,7 @@ class Cast:
                 print("[pose] raised-wrist reference moved %.0f degrees toward how you hold it now" % moved)
         to_cast = loud or near or ongoing or soft
         if loud or near or ongoing:
-            pose = "mouth"                           # shown as "to Cast"; a soft one stays plain until it proves actionable
+            pose = "mouth"                           # shown as "to Dextra"; a soft one stays plain until it proves actionable
         elif pose == "mouth":
             pose = "rest_table"                      # wrist up, but not talking to the band
         score = self.wearer_score(vid, rms, pose)
@@ -600,13 +600,13 @@ class Cast:
             d = ROOT / "data" / "debug_audio"
             d.mkdir(exist_ok=True)
             (d / ("%07.1f_v%s.pcm" % (run["start"], vid))).write_bytes(self.audio.slice(run["start"] - 0.05, run["end"] + 0.05))
-        if to_cast and not labelling:                # while examples are being collected, Cast does not act
+        if to_cast and not labelling:                # while examples are being collected, Dextra does not act
             with self.cmd_lock:                      # collect until the speaker pauses
                 if self.pending_cmd is None:
                     self.pending_cmd = {"texts": [], "scores": [], "entry": entry, "other": [], "soft": True,
                                         "first": time.time()}
                 if loud or near:
-                    self.pending_cmd["soft"] = False  # said straight to the band: Cast may answer aloud
+                    self.pending_cmd["soft"] = False  # said straight to the band: Dextra may answer aloud
                 self.pending_cmd["texts"].append(entry["text"])
                 self.pending_cmd["scores"].append(score)
                 # a recognised voice that is not the wearer's
@@ -734,8 +734,8 @@ class Cast:
             and bool(set(words) & {"me", "you", "i", "myself", "mine", "my", "wearer"})
 
     def assign(self, seg_id, who):
-        """Typed on the screen for a line Cast could not place: "that was me" / "Hardik" / a new
-        name. The line is relabelled and its audio becomes an example of that voice, so Cast
+        """Typed on the screen for a line Dextra could not place: "that was me" / "Hardik" / a new
+        name. The line is relabelled and its audio becomes an example of that voice, so Dextra
         recognises them next time."""
         seg = next((s for s in list(self.segments) if s.get("id") == seg_id), None)
         who = " ".join(str(who or "").split())[:30]
@@ -821,7 +821,7 @@ class Cast:
             print("[names] failed:", e)
             return
         vid = entry["speaker"]
-        # only name a voice once Cast knows which voice is the wearer, and never from a guess
+        # only name a voice once Dextra knows which voice is the wearer, and never from a guess
         if (self_name and vid >= 0 and self.voices.wearer_id is not None and vid != self.voices.wearer_id
                 and entry.get("voice_sim", 0) >= 0.42):
             self.set_name(vid, self_name, "said their own name")
@@ -847,7 +847,7 @@ class Cast:
 
     def wearer_score(self, voice_id, rms, pose):
         """Wrist raised: loudness decides (15 dB gap in calibration), and confident sentences
-        teach Cast which voiceprint is the wearer. Arm down: the voiceprint decides."""
+        teach Dextra which voiceprint is the wearer. Arm down: the voiceprint decides."""
         loud = self.loud.wearer_score(rms, pose)
         if loud is not None:
             if loud >= 0.8:
@@ -1166,7 +1166,7 @@ def main():
         sys.exit("Could not connect to the band.")
     print("Connected to", band.name)
 
-    cast = Cast(band, screen, voice)
+    cast = Dextra(band, screen, voice)
     if not cast.poses.calibrated:
         print("No calibration yet: every pose reads as 'moving'. Run the calibration page first (python -m cast.calibration).")
     cast.ears = ears.DiarizedDeepgram(on_segment=cast.on_segment, on_partial=cast.on_partial, send="pcm")

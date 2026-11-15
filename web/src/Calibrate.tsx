@@ -66,7 +66,7 @@ export default function Calibrate() {
     <div className="cal">
       <header className="cal-head">
         <div>
-          <div className="brand">Cast · Calibrate</div>
+          <div className="brand">Dextra · Calibrate</div>
           <div className={`status ${conn === 'live' ? 'live' : 'down'}`}>
             {conn === 'live' ? 'calibration server connected' : 'waiting for calib_server.py…'}
           </div>

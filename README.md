@@ -1,4 +1,4 @@
-# Cast
+# Dextra
 
 A voice assistant on a Vexo wristband that knows **when you are talking to it** and **who is talking**, and schedules tasks from plain speech.
 
@@ -8,7 +8,7 @@ Built at VexoHacks (Y Combinator, 14 November 2026) on the [Vexo Open kit](https
 
 ## What it does
 
-| You do | Cast does |
+| You do | Dextra does |
 |---|---|
 | Raise the band to your mouth and speak | Treats it as a command or a question |
 | Talk with your arm down | Remembers it, with who said it. Never acts on it. |
@@ -39,9 +39,9 @@ Vexo band (Bluetooth)
    for each finished stretch of speech:                 ▼
      NVIDIA Nemotron 3 Diarization (local ONNX)  → where the speaker changes
      voiceprints: ECAPA + TitaNet-Large + ERes2NetV2 → which enrolled voice, or "Someone"
-     loudness at the band + wrist pose + whose voice → was this said to Cast?
+     loudness at the band + wrist pose + whose voice → was this said to Dextra?
                                                         │
-   said to Cast ──► Gemini 4 ──► task · question · name a speaker · cancel
+   said to Dextra ──► Gemini 4 ──► task · question · name a speaker · cancel
    background   ──► transcript memory ──► "when someone mentions…" tasks
                                                         │
                                                         ▼
@@ -54,14 +54,14 @@ A line counts as a command when any of these holds:
 
 - it is loud at the band (someone is speaking right into it),
 - the wrist is raised and the voice is the wearer's, even if softer,
-- the wearer's recognised voice is fairly loud and the request turns out to be something Cast can do,
+- the wearer's recognised voice is fairly loud and the request turns out to be something Dextra can do,
 - a command is already in progress (slow speech arrives in pieces).
 
-Cast waits for 1.8 seconds of silence before acting, so a pause mid-sentence does not cut a command in half. A command in a voice recognised as someone else's is refused.
+Dextra waits for 1.8 seconds of silence before acting, so a pause mid-sentence does not cut a command in half. A command in a voice recognised as someone else's is refused.
 
 ### Knowing who is talking
 
-Each person records about 40 seconds through the band once. After that, every stretch of speech is compared with the enrolled voices by three speaker models, and Cast commits to a label only when one voice has a clear lead. Otherwise the line is labelled "Someone".
+Each person records about 40 seconds through the band once. After that, every stretch of speech is compared with the enrolled voices by three speaker models, and Dextra commits to a label only when one voice has a clear lead. Otherwise the line is labelled "Someone".
 
 - While a person keeps talking, they are judged on the whole turn (up to 8 seconds), not the latest fragment.
 - A voice that talks for 5 seconds and matches nobody enrolled becomes a new person automatically ("Person 3").
@@ -151,7 +151,7 @@ Open <http://localhost:8000/#calibrate>, double-tap the band so its light blinks
 2. **Poses** (the short steps lower on the page): Mouth, Rest Table, Side.
 3. **Who is talking:** the wearer and a second person at each pose. This sets the loudness cutoffs.
 
-Stop the server with Ctrl+C before starting Cast. The band accepts one connection at a time.
+Stop the server with Ctrl+C before starting Dextra. The band accepts one connection at a time.
 
 ## Run
 
@@ -160,7 +160,7 @@ Stop the server with Ctrl+C before starting Cast. The band accepts one connectio
 .venv/bin/python -m cast --sim             # pretend band with the kit's sample speech, no hardware
 ```
 
-While Cast runs, everything the band's microphone hears is sent to Deepgram. The band's light is solid blue whenever the microphone is on. Tell the people near you.
+While Dextra runs, everything the band's microphone hears is sent to Deepgram. The band's light is solid blue whenever the microphone is on. Tell the people near you.
 
 Settings, as environment variables:
 
@@ -206,4 +206,4 @@ vexo-open-kit/        the band's kit, cloned here. Never committed.
 
 ## Built with
 
-Vexo Open band and kit · Deepgram (speech to text) · Google Gemini (Gemini 4 for commands, questions and recaps; Gemini speech for Cast's voice) · NVIDIA Nemotron 3 Diarization and TitaNet-Large · SpeechBrain ECAPA · ERes2NetV2 · sherpa-onnx · React and Vite.
+Vexo Open band and kit · Deepgram (speech to text) · Google Gemini (Gemini 4 for commands, questions and recaps; Gemini speech for Dextra's voice) · NVIDIA Nemotron 3 Diarization and TitaNet-Large · SpeechBrain ECAPA · ERes2NetV2 · sherpa-onnx · React and Vite.
