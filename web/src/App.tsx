@@ -232,15 +232,24 @@ function SpeakerName({ label, speaker, segId, editable, known, onRename, onAssig
     else if (v && v !== label) onRename(speaker, v)
     setEditing(false)
   }
-  const listId = `known-${segId ?? speaker}`
+  if (unknown && segId) {
+    const pick = (name: string) => { closed.current = true; onAssign(segId, name); setEditing(false) }
+    return (
+      <span className="who-pick" role="group" aria-label="Who said this">
+        {['You', ...known].map((k) => (
+          <button key={k} type="button" className="who-chip" onMouseDown={(e) => e.preventDefault()}
+            onClick={() => pick(k === 'You' ? 'me' : k)}>{k}</button>
+        ))}
+        <input className="who-input who-new" autoFocus value={value} maxLength={30} placeholder="someone new…"
+          aria-label="A new person's name" onChange={(e) => setValue(e.target.value)} onBlur={save}
+          onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { closed.current = true; setEditing(false) } }} />
+      </span>
+    )
+  }
   return (
-    <>
-      <input className="who-input" autoFocus value={value} maxLength={30} list={unknown ? listId : undefined}
-        placeholder={unknown ? 'me, or a name' : undefined} aria-label={unknown ? 'Who said this' : 'Name for this person'}
-        onChange={(e) => setValue(e.target.value)} onBlur={save}
-        onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { closed.current = true; setEditing(false) } }} />
-      {unknown && <datalist id={listId}>{['me', ...known].map((k) => <option key={k} value={k} />)}</datalist>}
-    </>
+    <input className="who-input" autoFocus value={value} maxLength={30} aria-label="Name for this person"
+      onChange={(e) => setValue(e.target.value)} onBlur={save}
+      onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { closed.current = true; setEditing(false) } }} />
   )
 }
 
