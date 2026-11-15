@@ -22,7 +22,9 @@ class DiarizedDeepgram(speech.DeepgramSpeech):
         # Measured on a recording from this band: finished lines arrived 0.83 s behind real time with
         # smart_format + diarize + endpointing 300, and 0.17 s behind with these settings. Live
         # (interim) text is under 0.1 s behind either way.
-        options.setdefault("endpointing", 150)
+        # 150 ms was quickest but cut lines mid-phrase, and words at the cuts went missing from the
+        # finished text (replay of two recordings: 87% of the reference words at 150 ms, 91% at 500)
+        options.setdefault("endpointing", int(os.environ.get("CAST_ENDPOINTING", "500")))
         super().__init__(punctuate="true", **options)
         self.query["smart_format"] = "false"
         # CAST_KEYTERMS="a,b": words Deepgram should expect (nova-3 keyterms). Off by default: no gain measured
@@ -44,6 +46,8 @@ class DiarizedDeepgram(speech.DeepgramSpeech):
                   "end": float(w.get("end", 0))} for w in (best.get("words") or [])]
         if words:
             self.on_segment(words)
+        elif self.on_partial:
+            self.on_partial("")          # Deepgram took its guess back: clear the grey live line
         # keep the kit's own bookkeeping (finals, text) working too
         super()._message(message)
 
