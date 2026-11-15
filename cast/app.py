@@ -1262,8 +1262,15 @@ def main():
     try:                                         # the band's battery level, for the top bar
         band.on("battery", on_battery)
         band.configure(battery=30)               # a reading every 30 seconds
-        if hasattr(band, "get_battery"):
-            on_battery(band.get_battery())
+        def battery_loop():                      # ask outright too: the stream only speaks when the level changes,
+            while True:                          # and a browser opened later would never see the first reading
+                try:
+                    on_battery(band.get_battery())
+                except Exception as e:  # noqa: BLE001
+                    print("[battery] read failed:", str(e)[:80])
+                    time.sleep(50)
+                time.sleep(10)
+        threading.Thread(target=battery_loop, daemon=True).start()
     except Exception as e:  # noqa: BLE001 - older firmware or the pretend band: just no battery shown
         print("[battery] not available:", str(e)[:100])
     try:                                         # still / walk / run from the band, once a second
