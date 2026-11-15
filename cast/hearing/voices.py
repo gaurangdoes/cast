@@ -204,6 +204,7 @@ class Voices:
         scores = sorted(((float(np.mean([max(float(e[m] @ ex[m]) for ex in exs) for m in range(len(e))])), i)
                          for i, exs in people), reverse=True)
         margin = scores[0][0] - scores[1][0]
+        self.last_scores = " ".join("%s=%.2f" % (self.names.get(i, "you" if i == self.wearer_id else i), sc) for sc, i in scores) + " %.1fs" % seconds
         need = 0.20 if seconds >= 1.5 else 0.26       # commit only on a clear lead
         if margin >= 0.30 and seconds >= 2.5 and len(self.enrolled[scores[0][1]]) < 14:
             self.enrolled[scores[0][1]].append(e)      # a clear, long clip: one more example of this voice

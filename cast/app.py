@@ -584,8 +584,13 @@ class Cast:
         self.screen.send("segment", **entry)
         if mode == "ambient" and self.scheduler.waiting("heard"):
             self.pool.submit(self.check_heard, entry)
-        print("[voice %s%s sim %.2f | %-10s | wearer %.2f | %s] %s" % (
-            vid, "*" if entry["is_wearer"] else "", sim, pose, score, mode, run["text"]))
+        print("[voice %s%s sim %.2f | %-10s | wearer %.2f | %s] %s   {%s}" % (
+            vid, "*" if entry["is_wearer"] else "", sim, pose, score, mode, run["text"],
+            getattr(self.voices, "last_scores", "")))
+        if os.environ.get("CAST_DEBUG_AUDIO") == "1":       # keep each line's audio to study labelling misses
+            d = ROOT / "data" / "debug_audio"
+            d.mkdir(exist_ok=True)
+            (d / ("%07.1f_v%s.pcm" % (run["start"], vid))).write_bytes(self.audio.slice(run["start"] - 0.05, run["end"] + 0.05))
         if to_cast and not labelling:                # while examples are being collected, Cast does not act
             with self.cmd_lock:                      # collect until the speaker pauses
                 if self.pending_cmd is None:
@@ -705,7 +710,19 @@ class Cast:
                 return
             name = " ".join(str(msg.get("name") or "").split())[:30]
             if vid >= 0 and vid != self.voices.wearer_id and name:
+                if self.means_wearer(name):          # a second person named "me" would compete with You
+                    self.card(uuid.uuid4().hex[:8], "refused", "command", "Name a voice",
+                              reason="To mark a line as yours, click that line and choose You.")
+                    return
                 self.pool.submit(self.set_name, vid, name, "you typed it")
+
+    @staticmethod
+    def means_wearer(name):
+        """"me", "Me'", "that's me", "myself": the wearer, never a new person called "me"."""
+        words = re.sub(r"[^a-z ]", "", str(name).lower().replace("'s", " ").replace("’s", " ")).split()
+        return bool(words) and set(words) <= {"me", "you", "i", "myself", "mine", "my", "voice", "that", "thats",
+                                             "this", "was", "is", "its", "it", "wearer"} \
+            and bool(set(words) & {"me", "you", "i", "myself", "mine", "my", "wearer"})
 
     def assign(self, seg_id, who):
         """Typed on the screen for a line Cast could not place: "that was me" / "Hardik" / a new
@@ -716,7 +733,7 @@ class Cast:
         if seg is None or not who:
             return
         pcm = self.audio.slice(seg["a0"] - 0.05, seg["a1"] + 0.05)      # empty if older than 3 minutes
-        if who.lower() in ("me", "you", "i", "myself", "mine"):
+        if self.means_wearer(who):
             vid = self.voices.wearer_id
             if vid is not None:
                 self.voices.teach(pcm, vid=vid)
