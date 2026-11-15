@@ -75,6 +75,12 @@ export default function App() {
           <div className="tagline">Your wristband assistant</div>
           <div className="topbar-right">
             <ConnPill conn={state.conn} />
+            {state.battery && (
+              <div className={`pill${state.battery.percent <= 15 && !state.battery.charging ? ' pill-off' : ''}`}
+                title={state.battery.charging ? 'Band battery, charging' : 'Band battery'}>
+                Band {state.battery.percent}%{state.battery.charging ? ' ⚡' : ''}
+              </div>
+            )}
             <div className={`pill ${state.micOn ? 'pill-on' : 'pill-off'}`}>
               <Icon name={state.micOn ? 'mic' : 'micOff'} />
               {state.micOn ? 'Listening' : 'Off the record'}

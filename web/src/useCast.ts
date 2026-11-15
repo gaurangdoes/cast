@@ -25,11 +25,12 @@ export interface CastState {
   gesture: { label: string; at: number } | null
   ignored: number
   labelling: { mode: 'cast' | 'chat'; until: number } | null
+  battery: { percent: number; charging: boolean } | null
 }
 
 const initial: CastState = {
   conn: 'connecting', pose: null, mode: 'ambient', angle: null, poseSeen: false, levelPct: 0,
-  wearer: null, lines: [], partial: '', cards: [], reminders: [], banner: null, micOn: true, names: {}, gesture: null, ignored: 0, labelling: null,
+  wearer: null, lines: [], partial: '', cards: [], reminders: [], banner: null, micOn: true, names: {}, gesture: null, ignored: 0, labelling: null, battery: null,
 }
 
 type Action =
@@ -69,6 +70,8 @@ function applyEvent(s: CastState, m: CastEvent): CastState {
       return { ...s, names: m.names }
     case 'mic':
       return { ...s, micOn: m.on }
+    case 'battery':
+      return { ...s, battery: { percent: m.percent, charging: m.charging } }
     case 'labelling':
       return { ...s, labelling: m.mode && m.until ? { mode: m.mode, until: m.until } : null }
     case 'ignored':

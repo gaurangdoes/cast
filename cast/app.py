@@ -1253,6 +1253,19 @@ def main():
     else:
         band.configure(motion=50, events=True, audio=True, mic_level=True)
     band.on("notice", cast.on_notice)
+
+    def on_battery(m):
+        try:
+            screen.send("battery", percent=int(m.percent), charging=bool(getattr(m, "charging", False)))
+        except Exception as e:  # noqa: BLE001
+            print("[battery]", e)
+    try:                                         # the band's battery level, for the top bar
+        band.on("battery", on_battery)
+        band.configure(battery=30)               # a reading every 30 seconds
+        if hasattr(band, "get_battery"):
+            on_battery(band.get_battery())
+    except Exception as e:  # noqa: BLE001 - older firmware or the pretend band: just no battery shown
+        print("[battery] not available:", str(e)[:100])
     try:                                         # still / walk / run from the band, once a second
         band.on("activity", cast.on_activity)
         band.configure(activity=True)
