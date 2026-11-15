@@ -9,6 +9,9 @@ Offline (window) mode: one ONNX call per window of up to ~27 s (340 encoder fram
 with an empty speaker cache. Speaker ids are in order of first arrival *within the
 window*, so they are not stable across separate calls.
 
+Streaming mode (StreamingDiarizer, at the end of this file): audio fed as it arrives,
+with the model's speaker cache carried across chunks, so ids are stable for a session.
+
 Needs: onnxruntime numpy huggingface_hub (and transformers only for mel_filter_bank;
 replaced here by a local implementation so transformers is NOT required).
 """
@@ -263,10 +266,15 @@ class StreamingDiarizer:
     `processed_time` says how far it got; pass `provisional=True` to activity()/segments() to
     also get a one-off estimate of that tail (computed without touching the cache).
 
+    Each step the model sees [speaker cache <= 264 | FIFO <= 264 | chunk | look-ahead] encoder
+    frames (80 ms each) and the chunk's 10 ms frames are kept in a rolling history (history_s,
+    default 5 minutes) that activity()/segments() read.
+
     With background=True (default) feed() only queues the audio and a daemon thread runs the
-    model (about 40-90 ms per 0.72 s step on this CPU), so feed() is safe to call from an audio
-    callback; wait() blocks until everything fed has been processed. With background=False the
-    model runs inside feed().
+    model (measured on an M4 Pro: about 70 ms, at most 90 ms, per 0.72 s step once cache and FIFO
+    are full), so feed() is safe to call from an audio callback; wait() blocks until everything
+    fed has been processed; close() stops the thread. With background=False the model runs
+    inside feed(). One feeding thread and any number of reading threads.
     """
 
     def __init__(self, latency: str = "1.04s", chunk_len: int | None = None, right_context: int | None = None,

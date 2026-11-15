@@ -280,6 +280,13 @@ class Cast:
         threading.Thread(target=self._save_loop, daemon=True).start()
         self.audio = AudioBuffer()
         self.decoder = PcmDecoder()
+        # CAST_DIARIZE=stream: Nemotron runs continuously and keeps one id per person for the
+        # whole session, instead of looking at each sentence's window on its own
+        self.stream, self.stream_votes = None, {}
+        if os.environ.get("CAST_DIARIZE") == "stream":
+            self.stream = nemotron.StreamingDiarizer()
+        print("Speaker changes: %s" % ("streaming Nemotron with a session speaker cache" if self.stream
+                                       else "Nemotron per sentence (CAST_DIARIZE=stream for streaming)"))
         self.last_voice = None
         self.last_run_end = None
         self.arm = deque(maxlen=200)                 # (time, ax, ay, az) about 20 a second: was the arm steady?
@@ -337,6 +344,8 @@ class Cast:
             if pcm:                                  # so Deepgram's clock and our buffer stay in step
                 self.ears.feed_pcm(pcm)
                 self.audio.add(pcm)
+                if self.stream is not None:
+                    self.stream.feed(pcm)            # same audio, so the same clock as the buffer
         except Exception as e:  # noqa: BLE001 - a bad packet must not stop transcription
             self.audio_errors = getattr(self, "audio_errors", 0) + 1
             if self.audio_errors in (1, 50):
@@ -398,7 +407,13 @@ class Cast:
         win_start = max(0.0, w0 - CONTEXT_S)                 # extra audio before helps Nemotron
         pcm = self.audio.slice(win_start, w1 + 0.15)
         turns = []
-        if len(pcm) > 16000:                                 # at least 0.5 s
+        if self.stream is not None:
+            try:
+                # the newest second has no look-ahead yet: take the model's first estimate of it
+                turns = self.stream.segments(max(0.0, w0 - 1.0), w1 + 0.15, provisional=True)
+            except Exception as e:  # noqa: BLE001
+                print("[nemotron stream] failed:", e)
+        elif len(pcm) > 16000:                                 # at least 0.5 s
             try:
                 turns = [(spk, win_start + a, win_start + b) for spk, a, b in nemotron.diarize(pcm)]
             except Exception as e:  # noqa: BLE001
@@ -426,6 +441,16 @@ class Cast:
             # Nemotron only decides where the speaker changes; who it is comes from this
             # stretch's own audio, never from the context before it
             vid, sim = self.voices.identify(self.audio.slice(start - 0.05, end + 0.05))
+            if self.stream is not None and r["local"] is not None:
+                # streaming ids mean the same person all session: remember which voice each one
+                # turned out to be, and use that when this stretch is too short to tell
+                votes = self.stream_votes.setdefault(r["local"], {})
+                if vid is not None and vid >= 0:
+                    votes[vid] = votes.get(vid, 0.0) + (end - start)
+                elif votes:
+                    top, total = max(votes, key=votes.get), sum(votes.values())
+                    if votes[top] >= 4.0 and votes[top] >= 0.8 * total:
+                        vid = top
             # Someone still talking (under 0.7 s since their last words, and Nemotron saw no
             # change of speaker) is judged on everything they have said in this turn: longer
             # audio is what makes a voiceprint reliable (81% right at 1 s, 95% at 3 s).
