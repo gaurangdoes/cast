@@ -215,6 +215,7 @@ class Voices:
         scores = sorted(((float(np.mean([max(float(e[m] @ ex[m]) for ex in exs) for m in range(len(e))])), i)
                          for i, exs in people), reverse=True)
         margin = scores[0][0] - scores[1][0]
+        self.last_top, self.last_lead = scores[0][1], margin      # the closest voice, even when not committed
         self.last_scores = " ".join("%s=%.2f" % (self.names.get(i, "you" if i == self.wearer_id else i), sc) for sc, i in scores) + " %.1fs" % seconds
         # commit only on a clear lead. Checked on 243 lines captured live on 14 Nov: with a lead of
         # 0.15-0.20 the closest voice was the right one on 23 of 24 lines; at 0.10-0.15 only 15 of 18

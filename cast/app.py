@@ -393,8 +393,17 @@ class Dextra:
         voiceprint gives it a stable speaker id."""
         try:
             t0 = self.audio_t0 or time.time()
-            if self.voice.speaking(t0 + words[0]["start"], t0 + words[-1]["end"]):
-                return                               # Dextra's own spoken reply
+            # Dextra's own spoken reply reaches the microphone too. Drop only the words that fall
+            # inside the time it was speaking: dropping the whole line lost everything a person
+            # said around a reply (lines are longer now that Deepgram waits 500 ms to end one).
+            kept = [w for w in words if not self.voice.speaking(t0 + (w["start"] + w["end"]) / 2,
+                                                                t0 + (w["start"] + w["end"]) / 2)]
+            if len(kept) < len(words):
+                print("[own voice] left out %d of %d words heard while Dextra was speaking: %s" % (
+                    len(words) - len(kept), len(words), " ".join(w["text"] for w in words if w not in kept)[:80]))
+            words = kept
+            if not words:
+                return
             for run in self.split_by_speaker(words):
                 self.handle_run(run)
         except Exception:  # noqa: BLE001 - an error here must be seen, and must not stop the worker
@@ -442,6 +451,7 @@ class Dextra:
             # stretch's own audio, never from the context before it
             vid, sim = self.voices.identify(self.audio.slice(start - 0.05, end + 0.05))
             stranger = vid is not None and bool(getattr(self.voices, "last_stranger", False))
+            judged = vid is not None                 # a second or more of audio: the voice models had a say
             if self.stream is not None and r["local"] is not None:
                 # streaming ids mean the same person all session: remember which voice each one
                 # turned out to be, and use that when this stretch is too short to tell
@@ -494,15 +504,20 @@ class Dextra:
             self.last_run_end = end
             vid = self.voices.resolve(vid)
             self.last_voice = vid
+            guess = None                             # not sure enough to commit: still say who it sounds most like
+            # Never guess the wearer: only a committed match to the wearer's voice counts as them,
+            # or a look-alike voice could borrow their name. The guess is for display only.
+            if (vid == UNKNOWN and judged and not stranger and getattr(self.voices, "last_lead", 0) >= 0.04
+                    and self.voices.last_top != self.voices.wearer_id):
+                guess = self.voices.last_top
             out.append({"voice": vid, "sim": sim, "start": start, "end": end, "stranger": stranger and vid == UNKNOWN,
+                        "guess": guess,
                         "text": " ".join(w["text"] for w in r["words"])})
         return out
 
     def handle_run(self, run):
         t0 = self.audio_t0 or time.time()
         start, end = t0 + run["start"], t0 + run["end"]
-        if self.voice.speaking(start, end):
-            return                                   # that was Dextra's own voice
         pose = self.poses.pose_during(start, end)
         measured_pose, raised_angle = pose, self.poses.angle_to("mouth", start, end)
         rms = self.loud.level_during(start, end)
@@ -586,6 +601,8 @@ class Dextra:
         entry = {"speaker": vid, "text": run["text"], "start": start, "end": end,
                  "pose": pose, "rms_db": rms, "wearer": score, "mode": mode,
                  "is_wearer": is_wearer, "voice_sim": round(sim, 2), "name": self.voices.names.get(vid),
+                 "guess": (None if vid >= 0 or run.get("guess") is None or run["guess"] == self.voices.wearer_id
+                           else self.voices.names.get(run["guess"])),
                  "id": uuid.uuid4().hex[:8], "a0": run["start"], "a1": run["end"]}
         if mode == "ambient" and NAME_HINT.search(run["text"]):
             self.pool.submit(self.learn_names, entry)

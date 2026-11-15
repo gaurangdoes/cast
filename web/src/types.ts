@@ -9,6 +9,7 @@ export interface PartialEvent extends Base { kind: 'partial'; text: string }
 export interface SegmentEvent extends Base {
   kind: 'segment'; speaker: number; text: string; start: number; end: number
   pose: Pose; rms_db: number | null; wearer: number; mode: Mode; is_wearer?: boolean; voice_sim?: number; name?: string | null; id?: string
+  guess?: string | null
 }
 export interface ActionEvent extends Base {
   kind: 'action'; id?: string; status: 'done' | 'refused' | 'working'; mode: Mode; text: string; result?: string; reason?: string

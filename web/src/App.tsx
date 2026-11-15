@@ -25,9 +25,9 @@ function useStoredFlag(key: string, fallback = false): [boolean, () => void] {
 
 interface Who { label: string; kind: 'you' | 'person' | 'unknown'; color: number; initial: string }
 
-function whoOf(speaker: number | null | undefined, isWearer: boolean | undefined, names: Record<string, string>, fallback?: string | null): Who {
+function whoOf(speaker: number | null | undefined, isWearer: boolean | undefined, names: Record<string, string>, fallback?: string | null, guess?: string | null): Who {
   if (isWearer) return { label: 'You', kind: 'you', color: 0, initial: 'Y' }
-  if (speaker == null || speaker < 0) return { label: 'Someone', kind: 'unknown', color: 0, initial: '?' }
+  if (speaker == null || speaker < 0) return { label: guess ? `Likely ${guess}` : 'Someone', kind: 'unknown', color: 0, initial: guess ? guess.charAt(0).toUpperCase() : '?' }
   const label = names[String(speaker)] || fallback || `Person ${speaker}`
   const num = /^(?:Person|Speaker)\s+(\d+)$/i.exec(label)
   return { label, kind: 'person', color: Math.abs(speaker) % SPEAKER_COLORS, initial: num ? num[1] : label.trim().charAt(0).toUpperCase() || '?' }
@@ -281,7 +281,7 @@ function TranscriptPanel({ lines, partial, names, details, micOn, onRename, onAs
           </div>
         )}
         {lines.map((m, i) => {
-          const who = whoOf(m.speaker, m.is_wearer, names, m.name)
+          const who = whoOf(m.speaker, m.is_wearer, names, m.name, m.guess)
           const toCast = isToCast(m.mode)
           const prev = i > 0 ? lines[i - 1] : null
           const cont = !!prev && !toCast && prev.speaker === m.speaker && !!prev.is_wearer === !!m.is_wearer && isToCast(prev.mode) === toCast
