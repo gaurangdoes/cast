@@ -205,7 +205,9 @@ class Voices:
                          for i, exs in people), reverse=True)
         margin = scores[0][0] - scores[1][0]
         self.last_scores = " ".join("%s=%.2f" % (self.names.get(i, "you" if i == self.wearer_id else i), sc) for sc, i in scores) + " %.1fs" % seconds
-        need = 0.20 if seconds >= 1.5 else 0.26       # commit only on a clear lead
+        # commit only on a clear lead. Checked on 243 lines captured live on 14 Nov: with a lead of
+        # 0.15-0.20 the closest voice was the right one on 23 of 24 lines; at 0.10-0.15 only 15 of 18
+        need = 0.15 if seconds >= 1.5 else 0.22
         if not loose and margin >= 0.30 and seconds >= 2.5 and len(self.enrolled[scores[0][1]]) < 14:
             self.enrolled[scores[0][1]].append(e)      # a clear, long clip: one more example of this voice
             self.plain.setdefault(scores[0][1], []).append([self._unit(v) for v in self.embed_all(pcm16)])
