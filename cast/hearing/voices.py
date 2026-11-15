@@ -193,7 +193,7 @@ class Voices:
     def _unit(e):
         return e / (np.linalg.norm(e) or 1.0)
 
-    def identify_enrolled(self, pcm16):
+    def identify_enrolled(self, pcm16, loose=False):
         seconds = len(pcm16) / (SAMPLE_RATE * 2)
         if seconds < 1.0:
             return None, 0.0
@@ -206,9 +206,11 @@ class Voices:
         margin = scores[0][0] - scores[1][0]
         self.last_scores = " ".join("%s=%.2f" % (self.names.get(i, "you" if i == self.wearer_id else i), sc) for sc, i in scores) + " %.1fs" % seconds
         need = 0.20 if seconds >= 1.5 else 0.26       # commit only on a clear lead
-        if margin >= 0.30 and seconds >= 2.5 and len(self.enrolled[scores[0][1]]) < 14:
+        if not loose and margin >= 0.30 and seconds >= 2.5 and len(self.enrolled[scores[0][1]]) < 14:
             self.enrolled[scores[0][1]].append(e)      # a clear, long clip: one more example of this voice
             self.plain.setdefault(scores[0][1], []).append([self._unit(v) for v in self.embed_all(pcm16)])
+        if loose:                                      # the closest voice and its lead, whatever the lead is
+            return scores[0][1], margin
         return (scores[0][1] if margin >= need else UNKNOWN), margin
 
     def identify(self, pcm16):

@@ -754,6 +754,44 @@ class Cast:
         seg["name"] = self.voices.names.get(vid)
         self.screen.send("relabel", seg=seg_id, speaker=vid, is_wearer=seg["is_wearer"], name=seg["name"])
         print("[voices] line %s assigned to %s" % (seg_id, "you" if seg["is_wearer"] else seg["name"]))
+        self.relabel_unknown(vid, seg)
+
+    def relabel_unknown(self, vid, taught):
+        """After a correction: look back over the lines still marked "Someone" (the last three
+        minutes, while their audio is kept) and give this voice the ones that now match it.
+        Lines too short to judge follow the line they are attached to."""
+        segs, moved = list(self.segments), {taught["id"]}
+        for s in segs:
+            if s.get("speaker") != UNKNOWN or s["id"] in moved:
+                continue
+            pcm = self.audio.slice(s["a0"] - 0.05, s["a1"] + 0.05)
+            if len(pcm) < 32000:
+                continue
+            try:
+                who, lead = self.voices.identify_enrolled(pcm, loose=True)
+            except Exception as e:  # noqa: BLE001
+                print("[voices] look-back failed:", e)
+                return
+            if who == vid and lead >= 0.12:              # a smaller lead is enough once you have said they are here
+                moved.add(s["id"])
+        changed = True
+        while changed:                                   # short fragments right next to a matched line
+            changed = False
+            for a, b in zip(segs, segs[1:]):
+                for short, other in ((a, b), (b, a)):
+                    if (short["id"] not in moved and other["id"] in moved and short.get("speaker") == UNKNOWN
+                            and short["a1"] - short["a0"] < 1.0 and abs(b["a0"] - a["a1"]) < 0.6):
+                        moved.add(short["id"])
+                        changed = True
+        n = 0
+        for s in segs:
+            if s["id"] in moved and s is not taught:
+                s["speaker"], s["is_wearer"] = vid, vid == self.voices.wearer_id
+                s["name"] = self.voices.names.get(vid)
+                self.screen.send("relabel", seg=s["id"], speaker=vid, is_wearer=s["is_wearer"], name=s["name"])
+                n += 1
+        if n:
+            print("[voices] look-back: %d earlier line(s) also given to %s" % (n, "you" if vid == self.voices.wearer_id else self.voices.names.get(vid)))
 
     def find_voice(self, label):
         """'Person 2', 'speaker two', 'Ardek' -> that voice's id, or None."""

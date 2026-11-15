@@ -4,6 +4,7 @@ The kit's DeepgramSpeech (vexo-open-kit/examples/python/speech.py) already handl
 connection, keep-alives and errors. We add diarize=true and read the word-level speaker
 labels, so each finished piece of speech arrives as segments: who spoke, what, and when.
 """
+import os
 import sys
 from pathlib import Path
 
@@ -24,6 +25,9 @@ class DiarizedDeepgram(speech.DeepgramSpeech):
         options.setdefault("endpointing", 150)
         super().__init__(punctuate="true", **options)
         self.query["smart_format"] = "false"
+        # CAST_KEYTERMS="a,b": words Deepgram should expect (nova-3 keyterms). Off by default: no gain measured
+        terms = [t.strip() for t in os.environ.get("CAST_KEYTERMS", "").split(",")]
+        self.query = list(self.query.items()) + [("keyterm", t) for t in terms if t]
         self.on_segment = on_segment
         self.on_partial = on_partial
 
